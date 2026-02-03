@@ -19,7 +19,6 @@ export default function App() {
     return unsub;
   }, []);
 
-  // Show loading while Firebase checks login
   if (checking) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -28,7 +27,5 @@ export default function App() {
     );
   }
 
-  // 🔑 THIS WAS MISSING
-  // If logged in → game, else → login
   return user ? <GameScreen /> : <LoginScreen />;
 }
