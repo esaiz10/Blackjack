@@ -8,7 +8,27 @@ import { cardImages } from "../components/cardImages";
 import { signOut } from "firebase/auth";
 import { auth } from "../firebaseConfig";
 
-export default function GameScreen() {
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const STATS_KEY = "blackjack_stats_v1";
+
+async function recordResult(result) {
+  const raw = await AsyncStorage.getItem(STATS_KEY);
+  let stats = { wins: 0, losses: 0 };
+
+  if (raw) {
+    try {
+      stats = { ...stats, ...JSON.parse(raw) };
+    } catch {}
+  }
+
+  if (result === "win") stats.wins += 1;
+  if (result === "loss") stats.losses += 1;
+
+  await AsyncStorage.setItem(STATS_KEY, JSON.stringify(stats));
+}
+
+export default function GameScreen({ onExitToWelcome }) {
   const [deck, setDeck] = useState([]);
   const [player, setPlayer] = useState([]);
   const [dealer, setDealer] = useState([]);
@@ -63,7 +83,7 @@ export default function GameScreen() {
     startGame();
   }, []);
 
-  const hitPlayer = () => {
+  const hitPlayer = async () => {
     if (gameOver) return;
 
     const result = deal(deck, 1);
@@ -75,10 +95,11 @@ export default function GameScreen() {
     if (getScore(nextHand) > 21) {
       setMessage("You busted — Dealer wins.");
       setGameOver(true);
+      await recordResult("loss");
     }
   };
 
-  const stand = () => {
+  const stand = async () => {
     if (gameOver) return;
 
     let d = deck;
@@ -98,13 +119,17 @@ export default function GameScreen() {
 
     if (dealerScore > 21 || playerScore > dealerScore) {
       setMessage("You win!");
+      setGameOver(true);
+      await recordResult("win");
     } else if (dealerScore > playerScore) {
       setMessage("Dealer wins.");
+      setGameOver(true);
+      await recordResult("loss");
     } else {
       setMessage("Push (tie).");
+      setGameOver(true);
+      // No win/loss recorded for ties
     }
-
-    setGameOver(true);
   };
 
   const safeImage = (code) => cardImages[code] ?? cardImages.BACK;
@@ -167,6 +192,14 @@ export default function GameScreen() {
 
       <Pressable style={gameStyles.button} onPress={startGame}>
         <Text style={gameStyles.buttonText}>New Game</Text>
+      </Pressable>
+
+      {/* Back to Welcome (uses prop) */}
+      <Pressable
+        style={gameStyles.button}
+        onPress={() => onExitToWelcome && onExitToWelcome()}
+      >
+        <Text style={gameStyles.buttonText}>Back to Welcome</Text>
       </Pressable>
 
       <Pressable style={gameStyles.button} onPress={() => signOut(auth)}>

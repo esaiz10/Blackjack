@@ -1,19 +1,24 @@
 import React, { useEffect, useState } from "react";
 import { View, ActivityIndicator } from "react-native";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "./firebaseConfig";
-
 import LoginScreen from "./screens/LoginScreen";
+import WelcomeScreen from "./screens/welcomeScreen";
 import GameScreen from "./screens/GameScreen";
+import StatsScreen from "./screens/statScreen";
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
 
+  // "welcome" | "game" | "stats"
+  const [screen, setScreen] = useState("welcome");
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setChecking(false);
+      if (currentUser) setScreen("welcome");
     });
 
     return unsub;
@@ -27,5 +32,21 @@ export default function App() {
     );
   }
 
-  return user ? <GameScreen /> : <LoginScreen />;
+  if (!user) return <LoginScreen />;
+
+  if (screen === "stats") {
+    return <StatsScreen onBack={() => setScreen("welcome")} />;
+  }
+
+  if (screen === "game") {
+    return <GameScreen onExitToWelcome={() => setScreen("welcome")} />;
+  }
+
+  return (
+    <WelcomeScreen
+      onPlay={() => setScreen("game")}
+      onStats={() => setScreen("stats")}
+      onSignOut={() => signOut(auth)}
+    />
+  );
 }
