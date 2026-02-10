@@ -4,13 +4,13 @@ import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCUndxRuqQDYuI--WcSo39UFoaueLPLBPI",
-  authDomain: "blackjack-f0fe7.firebaseapp.com",
-  projectId: "blackjack-f0fe7",
-  storageBucket: "blackjack-f0fe7.firebasestorage.app",
-  messagingSenderId: "497426065715",
-  appId: "1:497426065715:web:e43c29904f7d2b047fb646",
-  measurementId: "G-GTEJ7RE78C",
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
 // ✅ THIS is the correct line (NOT "const app = initial")
@@ -22,4 +22,3 @@ export const auth = initializeAuth(app, {
 
 export const db = getFirestore(app);
 export default app;
-
