@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "./firebaseConfig";
+import { auth } from "./firebaseConfig.js";
 
-import LoginScreen from "./screens/LoginScreen";
-import GameScreen from "./screens/GameScreen";
+import LoginScreen from "./screens/LoginScreen.jsx";
+import GameScreen from "./screens/GameScreen.jsx";
 
 export default function App() {
   const [user, setUser] = useState(null);

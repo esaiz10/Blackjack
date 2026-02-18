@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { makeNewDeck, shuffleDeck, deal } from "../components/deck";
-import { cardImages } from "../components/cardImages";
+import { makeNewDeck, shuffleDeck, deal } from "../components/deck.js";
+import { cardImages } from "../components/cardImages.js";
 import { signOut } from "firebase/auth";
-import { auth } from "../firebaseConfig";
+import { auth } from "../firebaseConfig.js";
 
 export default function GameScreen() {
   const [deck, setDeck] = useState([]);
