@@ -17,3 +17,13 @@ if (hasReanimated) {
     return Reanimated;
   });
 }
+
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
+);
+
+jest.mock('firebase/firestore', () => ({
+  collection: jest.fn(),
+  addDoc: jest.fn(),
+  serverTimestamp: jest.fn(() => ({ seconds: 0, nanoseconds: 0 })),
+}));
