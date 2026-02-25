@@ -19,9 +19,11 @@ import { auth, db } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
 
 async function fetchHistory() {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not signed in.");
   const q = query(
     collection(db, "games"),
-    where("userId", "==", auth.currentUser.uid),
+    where("userId", "==", user.uid),
     orderBy("playedAt", "desc"),
     limit(100)
   );
@@ -74,7 +76,7 @@ export default function HistoryScreen({ onBack }) {
         <Text style={styles.rowIndex}>#{index + 1}</Text>
         <View style={[styles.badge, { borderColor: RESULT_COLOR[item.result] }]}>
           <Text style={[styles.badgeText, { color: RESULT_COLOR[item.result] }]}>
-            {RESULT_LABEL[item.result] ?? item.result.toUpperCase()}
+            {RESULT_LABEL[item.result] ?? (item.result ? item.result.toUpperCase() : "?")}
           </Text>
         </View>
       </View>
