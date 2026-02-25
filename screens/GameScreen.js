@@ -9,12 +9,13 @@ import {
 } from "react-native";
 import { signOut } from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 import { gameStyles } from "../styles/GameStyles";
 import { makeNewDeck, shuffleDeck, deal } from "../components/deck";
 import { cardImages } from "../components/cardImages";
 import { getDealerDecision } from "../components/aiPlayer";
-import { auth } from "../firebaseConfig";
+import { auth, db } from "../firebaseConfig";
 
 // ── Stats (AsyncStorage) ──────────────────────────────────────────────────────
 
@@ -29,6 +30,26 @@ async function recordResult(result) {
     await AsyncStorage.setItem(STATS_KEY, JSON.stringify(stats));
   } catch (e) {
     console.error("recordResult failed:", e);
+  }
+}
+
+// ── Game history (Firestore) ──────────────────────────────────────────────────
+
+async function saveGame(result, playerHand, dealerHand, getScore) {
+  const user = auth.currentUser;
+  if (!user) return;
+  try {
+    await addDoc(collection(db, "games"), {
+      userId: user.uid,
+      result,                          // 'win' | 'loss' | 'push' | 'bust'
+      playerScore: getScore(playerHand),
+      dealerScore: getScore(dealerHand),
+      playerHand,
+      dealerHand,
+      playedAt: serverTimestamp(),
+    });
+  } catch (e) {
+    console.error("saveGame failed:", e.message);
   }
 }
 
@@ -107,6 +128,7 @@ export default function GameScreen({ onExitToWelcome }) {
     if (getScore(dealerHand) > 21) {
       setResult("win");
       recordResult("win");
+      saveGame("win", playerHand, dealerHand, getScore);
       setPhase("done");
       return;
     }
@@ -114,7 +136,7 @@ export default function GameScreen({ onExitToWelcome }) {
     const decision = getDealerDecision(dealerHand, playerHand);
 
     const timer = setTimeout(() => {
-      if (decision === "stand" || decision === "split") {
+      if (decision === "stand") {
         // Dealer stands — resolve
         const dealerScore = getScore(dealerHand);
         const playerScore = getScore(playerHand);
@@ -125,6 +147,7 @@ export default function GameScreen({ onExitToWelcome }) {
         setResult(res);
         if (res === "win") recordResult("win");
         else if (res === "loss") recordResult("loss");
+        saveGame(res, playerHand, dealerHand, getScore);
         setPhase("done");
       } else {
         // hit or double — dealer draws one card
@@ -150,6 +173,7 @@ export default function GameScreen({ onExitToWelcome }) {
     if (getScore(next) > 21) {
       setResult("bust");
       recordResult("loss");
+      saveGame("bust", next, dealerHand, getScore);
       setPhase("done");
     }
   };
@@ -168,6 +192,7 @@ export default function GameScreen({ onExitToWelcome }) {
     if (getScore(next) > 21) {
       setResult("bust");
       recordResult("loss");
+      saveGame("bust", next, dealerHand, getScore);
       setPhase("done");
       return;
     }

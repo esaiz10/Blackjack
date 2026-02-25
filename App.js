@@ -6,6 +6,7 @@ import LoginScreen from "./screens/LoginScreen";
 import WelcomeScreen from "./screens/welcomeScreen";
 import GameScreen from "./screens/GameScreen";
 import StatsScreen from "./screens/statScreen";
+import HistoryScreen from "./screens/historyScreen";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -38,6 +39,10 @@ export default function App() {
     return <StatsScreen onBack={() => setScreen("welcome")} />;
   }
 
+  if (screen === "history") {
+    return <HistoryScreen onBack={() => setScreen("welcome")} />;
+  }
+
   if (screen === "game") {
     return <GameScreen onExitToWelcome={() => setScreen("welcome")} />;
   }
@@ -47,6 +52,7 @@ export default function App() {
       user={user}
       onPlay={() => setScreen("game")}
       onStats={() => setScreen("stats")}
+      onHistory={() => setScreen("history")}
       onSignOut={() => signOut(auth)}
     />
   );
