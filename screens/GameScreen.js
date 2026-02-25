@@ -108,11 +108,33 @@ export default function GameScreen({ onExitToWelcome }) {
       r = drawCard(d); d = r.deck; dlr.push(r.card);
     }
 
+    const playerScore = getScore(p);
+    const dealerScore = getScore(dlr);
+    const playerBJ = playerScore === 21;
+    const dealerBJ = dealerScore === 21;
+
     setPlayerHand(p);
     setDealerHand(dlr);
     setDeck(d);
-    setPhase("player");
     setResult(null);
+
+    if (playerBJ && dealerBJ) {
+      setPhase("done");
+      setResult("push");
+      saveGame("push", p, dlr, getScore);
+    } else if (playerBJ) {
+      setPhase("done");
+      setResult("win");
+      recordResult("win");
+      saveGame("win", p, dlr, getScore);
+    } else if (dealerBJ) {
+      setPhase("done");
+      setResult("loss");
+      recordResult("loss");
+      saveGame("loss", p, dlr, getScore);
+    } else {
+      setPhase("player");
+    }
   };
 
   useEffect(() => { startGame(); }, []);
