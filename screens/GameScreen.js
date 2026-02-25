@@ -1,210 +1,303 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, Image, Pressable } from "react-native";
+import {
+  View,
+  Text,
+  Image,
+  Pressable,
+  ScrollView,
+  SafeAreaView,
+} from "react-native";
+import { signOut } from "firebase/auth";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { gameStyles } from "../styles/GameStyles";
 import { makeNewDeck, shuffleDeck, deal } from "../components/deck";
 import { cardImages } from "../components/cardImages";
-
-import { signOut } from "firebase/auth";
+import { getDealerDecision } from "../components/aiPlayer";
 import { auth } from "../firebaseConfig";
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
+// ── Stats (AsyncStorage) ──────────────────────────────────────────────────────
 
 const STATS_KEY = "blackjack_stats_v1";
 
 async function recordResult(result) {
-  const raw = await AsyncStorage.getItem(STATS_KEY);
-  let stats = { wins: 0, losses: 0 };
-
-  if (raw) {
-    try {
-      stats = { ...stats, ...JSON.parse(raw) };
-    } catch {}
+  try {
+    const raw = await AsyncStorage.getItem(STATS_KEY);
+    const stats = raw ? JSON.parse(raw) : { wins: 0, losses: 0 };
+    if (result === "win") stats.wins += 1;
+    if (result === "loss") stats.losses += 1;
+    await AsyncStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  } catch (e) {
+    console.error("recordResult failed:", e);
   }
-
-  if (result === "win") stats.wins += 1;
-  if (result === "loss") stats.losses += 1;
-
-  await AsyncStorage.setItem(STATS_KEY, JSON.stringify(stats));
 }
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+// phase: 'player' → 'dealer' → 'done'
 
 export default function GameScreen({ onExitToWelcome }) {
   const [deck, setDeck] = useState([]);
-  const [player, setPlayer] = useState([]);
-  const [dealer, setDealer] = useState([]);
-  const [message, setMessage] = useState("");
-  const [gameOver, setGameOver] = useState(false);
+  const [playerHand, setPlayerHand] = useState([]);
+  const [dealerHand, setDealerHand] = useState([]);
+  const [phase, setPhase] = useState("player");
+  const [result, setResult] = useState(null); // 'win' | 'loss' | 'push' | 'bust'
 
-  // Calculate blackjack score (A = 11 or 1)
-  const getScore = (hand) => {
+  // ── Scoring ───────────────────────────────────────────────────────────────
+
+  const scoreHand = (hand) => {
     let total = 0;
     let aces = 0;
-
     for (const card of hand) {
-      const value = card.slice(0, -1); // "A", "10", "K"...
-      if (value === "A") {
-        total += 11;
-        aces += 1;
-      } else if (value === "K" || value === "Q" || value === "J") {
-        total += 10;
-      } else {
-        total += Number(value);
-      }
+      const v = card.slice(0, -1);
+      if (v === "A") { total += 11; aces++; }
+      else if (["K", "Q", "J"].includes(v)) total += 10;
+      else total += Number(v);
     }
-
-    // Convert Ace from 11 to 1 if busting
-    while (total > 21 && aces > 0) {
-      total -= 10;
-      aces -= 1;
-    }
-
-    return total;
+    while (total > 21 && aces > 0) { total -= 10; aces--; }
+    const soft = aces > 0 && total <= 21;
+    return { total, soft };
   };
+
+  const getScore = (hand) => scoreHand(hand).total;
+
+  const scoreLabel = (hand, hideSecond = false) => {
+    if (!hand.length) return "—";
+    const visibleHand = hideSecond ? [hand[0]] : hand;
+    const { total, soft } = scoreHand(visibleHand);
+    return soft ? `${total} (soft)` : `${total}`;
+  };
+
+  // ── Deck helper ───────────────────────────────────────────────────────────
+
+  const drawCard = (currentDeck) => {
+    const r = deal(currentDeck, 1);
+    return { card: r.hand[0], deck: r.deck };
+  };
+
+  // ── Start / reset ─────────────────────────────────────────────────────────
 
   const startGame = () => {
     let d = shuffleDeck(makeNewDeck());
+    const p = [], dlr = [];
 
-    const dealtPlayer = deal(d, 2);
-    const playerHand = dealtPlayer.hand;
-    d = dealtPlayer.deck;
+    for (let i = 0; i < 2; i++) {
+      let r;
+      r = drawCard(d); d = r.deck; p.push(r.card);
+      r = drawCard(d); d = r.deck; dlr.push(r.card);
+    }
 
-    const dealtDealer = deal(d, 2);
-    const dealerHand = dealtDealer.hand;
-    d = dealtDealer.deck;
-
-    setPlayer(playerHand);
-    setDealer(dealerHand);
+    setPlayerHand(p);
+    setDealerHand(dlr);
     setDeck(d);
-    setMessage("");
-    setGameOver(false);
+    setPhase("player");
+    setResult(null);
   };
+
+  useEffect(() => { startGame(); }, []);
+
+  // ── AI Dealer auto-play ───────────────────────────────────────────────────
+  // The dealer uses basic strategy, looking at the player's face-up card.
+  // Re-runs every time dealerHand changes while phase is 'dealer'.
 
   useEffect(() => {
-    startGame();
-  }, []);
+    if (phase !== "dealer" || dealerHand.length === 0 || playerHand.length === 0) return;
 
-  const hitPlayer = async () => {
-    if (gameOver) return;
+    // Dealer busted — resolve immediately
+    if (getScore(dealerHand) > 21) {
+      setResult("win");
+      recordResult("win");
+      setPhase("done");
+      return;
+    }
 
-    const result = deal(deck, 1);
-    const nextHand = [...player, ...result.hand];
+    const decision = getDealerDecision(dealerHand, playerHand);
 
-    setPlayer(nextHand);
-    setDeck(result.deck);
+    const timer = setTimeout(() => {
+      if (decision === "stand" || decision === "split") {
+        // Dealer stands — resolve
+        const dealerScore = getScore(dealerHand);
+        const playerScore = getScore(playerHand);
+        let res;
+        if (dealerScore > playerScore) res = "loss";
+        else if (playerScore > dealerScore) res = "win";
+        else res = "push";
+        setResult(res);
+        if (res === "win") recordResult("win");
+        else if (res === "loss") recordResult("loss");
+        setPhase("done");
+      } else {
+        // hit or double — dealer draws one card
+        const { card, deck: newDeck } = drawCard(deck);
+        const next = [...dealerHand, card];
+        setDealerHand(next);
+        setDeck(newDeck);
+        // effect re-runs with new dealerHand
+      }
+    }, 750);
 
-    if (getScore(nextHand) > 21) {
-      setMessage("You busted — Dealer wins.");
-      setGameOver(true);
-      await recordResult("loss");
+    return () => clearTimeout(timer);
+  }, [dealerHand, phase, deck, playerHand]);
+
+  // ── Player actions ────────────────────────────────────────────────────────
+
+  const handleHit = () => {
+    if (phase !== "player") return;
+    const { card, deck: newDeck } = drawCard(deck);
+    const next = [...playerHand, card];
+    setPlayerHand(next);
+    setDeck(newDeck);
+    if (getScore(next) > 21) {
+      setResult("bust");
+      recordResult("loss");
+      setPhase("done");
     }
   };
 
-  const stand = async () => {
-    if (gameOver) return;
-
-    let d = deck;
-    let dealerHand = [...dealer];
-
-    while (getScore(dealerHand) < 17) {
-      const draw = deal(d, 1);
-      d = draw.deck;
-      dealerHand = [...dealerHand, ...draw.hand];
-    }
-
-    const playerScore = getScore(player);
-    const dealerScore = getScore(dealerHand);
-
-    setDeck(d);
-    setDealer(dealerHand);
-
-    if (dealerScore > 21 || playerScore > dealerScore) {
-      setMessage("You win!");
-      setGameOver(true);
-      await recordResult("win");
-    } else if (dealerScore > playerScore) {
-      setMessage("Dealer wins.");
-      setGameOver(true);
-      await recordResult("loss");
-    } else {
-      setMessage("Push (tie).");
-      setGameOver(true);
-      // No win/loss recorded for ties
-    }
+  const handleStand = () => {
+    if (phase !== "player") return;
+    setPhase("dealer");
   };
 
-  const safeImage = (code) => cardImages[code] ?? cardImages.BACK;
+  const handleDoubleDown = () => {
+    if (phase !== "player" || playerHand.length !== 2) return;
+    const { card, deck: newDeck } = drawCard(deck);
+    const next = [...playerHand, card];
+    setPlayerHand(next);
+    setDeck(newDeck);
+    if (getScore(next) > 21) {
+      setResult("bust");
+      recordResult("loss");
+      setPhase("done");
+      return;
+    }
+    setPhase("dealer");
+  };
+
+  // ── Render helpers ────────────────────────────────────────────────────────
+
+  const safeImage = (code) => cardImages[code];
+  const hideHole = phase === "player";
+
+  const RESULT_COLOR = { win: "#4cff80", loss: "#ff5555", push: "#FFD700", bust: "#ff5555" };
+  const RESULT_MSG = {
+    win: "You win!",
+    loss: "Dealer wins.",
+    push: "Push — Tie!",
+    bust: "Busted!",
+  };
+
+  const canAct = phase === "player";
 
   return (
-    <View style={gameStyles.container}>
-      <Text style={gameStyles.title}>Blackjack</Text>
-
-      {/* Dealer */}
-      <Text style={gameStyles.sectionLabel}>Dealer</Text>
-      <Text style={gameStyles.scoreText}>
-        Score: {dealer.length ? getScore(dealer) : "-"}
-      </Text>
-
-      <View style={gameStyles.handRow}>
-        {dealer.map((c, idx) => (
-          <Image
-            key={`${c}-${idx}`}
-            source={safeImage(c)}
-            style={gameStyles.cardImage}
-          />
-        ))}
-      </View>
-
-      {/* Player */}
-      <Text style={[gameStyles.sectionLabel, { marginTop: 16 }]}>Player</Text>
-      <Text style={gameStyles.scoreText}>
-        Score: {player.length ? getScore(player) : "-"}
-      </Text>
-
-      <View style={gameStyles.handRow}>
-        {player.map((c, idx) => (
-          <Image
-            key={`${c}-${idx}`}
-            source={safeImage(c)}
-            style={gameStyles.cardImage}
-          />
-        ))}
-      </View>
-
-      {/* Message */}
-      {message ? <Text style={gameStyles.message}>{message}</Text> : null}
-
-      {/* Buttons */}
-      <Pressable
-        style={[gameStyles.button, gameOver && gameStyles.buttonDisabled]}
-        onPress={hitPlayer}
-        disabled={gameOver}
+    <SafeAreaView style={gameStyles.container}>
+      <ScrollView
+        contentContainerStyle={gameStyles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        <Text style={gameStyles.buttonText}>Hit</Text>
-      </Pressable>
+        <Text style={gameStyles.title}>Blackjack</Text>
 
-      <Pressable
-        style={[gameStyles.button, gameOver && gameStyles.buttonDisabled]}
-        onPress={stand}
-        disabled={gameOver}
-      >
-        <Text style={gameStyles.buttonText}>Stand</Text>
-      </Pressable>
+        {/* Phase indicator */}
+        {phase !== "done" && (
+          <Text style={gameStyles.phaseText}>
+            {phase === "player" ? "Your turn" : "Dealer is playing…"}
+          </Text>
+        )}
 
-      <Pressable style={gameStyles.button} onPress={startGame}>
-        <Text style={gameStyles.buttonText}>New Game</Text>
-      </Pressable>
+        {/* ── DEALER ──────────────────────────────────────────────────── */}
+        <View style={gameStyles.divider} />
+        <Text style={gameStyles.sectionLabel}>Dealer (AI)</Text>
+        <Text style={gameStyles.scoreText}>
+          Score: {scoreLabel(dealerHand, hideHole)}
+        </Text>
+        <View style={gameStyles.handRow}>
+          {dealerHand.map((c, idx) =>
+            hideHole && idx === 1 ? (
+              <View key={`d-back-${idx}`} style={gameStyles.cardBack}>
+                <View style={gameStyles.cardBackInner} />
+              </View>
+            ) : (
+              <Image
+                key={`d-${c}-${idx}`}
+                source={safeImage(c)}
+                style={gameStyles.cardImage}
+              />
+            )
+          )}
+        </View>
 
-      {/* Back to Welcome (uses prop) */}
-      <Pressable
-        style={gameStyles.button}
-        onPress={() => onExitToWelcome && onExitToWelcome()}
-      >
-        <Text style={gameStyles.buttonText}>Back to Welcome</Text>
-      </Pressable>
+        {/* ── PLAYER ──────────────────────────────────────────────────── */}
+        <View style={gameStyles.divider} />
+        <Text style={gameStyles.sectionLabel}>You</Text>
+        <Text style={gameStyles.scoreText}>Score: {scoreLabel(playerHand)}</Text>
+        <View style={gameStyles.handRow}>
+          {playerHand.map((c, idx) => (
+            <Image
+              key={`p-${c}-${idx}`}
+              source={safeImage(c)}
+              style={gameStyles.cardImage}
+            />
+          ))}
+        </View>
 
-      <Pressable style={gameStyles.button} onPress={() => signOut(auth)}>
-        <Text style={gameStyles.buttonText}>Log Out</Text>
-      </Pressable>
-    </View>
+        {/* Result */}
+        {result ? (
+          <Text style={[gameStyles.message, { color: RESULT_COLOR[result] }]}>
+            {RESULT_MSG[result]}
+          </Text>
+        ) : null}
+
+        {/* ── Action buttons ───────────────────────────────────────────── */}
+        <View style={gameStyles.buttonRow}>
+          <Pressable
+            style={[gameStyles.button, !canAct && gameStyles.buttonDisabled]}
+            onPress={handleHit}
+            disabled={!canAct}
+          >
+            <Text style={gameStyles.buttonText}>Hit</Text>
+          </Pressable>
+
+          <Pressable
+            style={[gameStyles.button, !canAct && gameStyles.buttonDisabled]}
+            onPress={handleStand}
+            disabled={!canAct}
+          >
+            <Text style={gameStyles.buttonText}>Stand</Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              gameStyles.button,
+              gameStyles.buttonGold,
+              (!canAct || playerHand.length !== 2) && gameStyles.buttonDisabled,
+            ]}
+            onPress={handleDoubleDown}
+            disabled={!canAct || playerHand.length !== 2}
+          >
+            <Text style={gameStyles.buttonText}>Double</Text>
+          </Pressable>
+        </View>
+
+        <View style={gameStyles.divider} />
+
+        <Pressable style={gameStyles.button} onPress={startGame}>
+          <Text style={gameStyles.buttonText}>New Game</Text>
+        </Pressable>
+
+        <Pressable
+          style={[gameStyles.button, { marginTop: 6 }]}
+          onPress={() => onExitToWelcome && onExitToWelcome()}
+        >
+          <Text style={gameStyles.buttonText}>← Menu</Text>
+        </Pressable>
+
+        <Pressable
+          style={[gameStyles.button, gameStyles.buttonDanger, { marginTop: 6 }]}
+          onPress={() => signOut(auth)}
+        >
+          <Text style={gameStyles.buttonText}>Log Out</Text>
+        </Pressable>
+      </ScrollView>
+    </SafeAreaView>
   );
 }

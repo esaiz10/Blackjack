@@ -61,6 +61,5 @@ export const cardImages = {
   "QC": require("./cards/queen_of_clubs.png"),
   "KC": require("./cards/king_of_clubs.png"),
 
-  BACK: require("./cards/red_joker.png"),
 };
   
