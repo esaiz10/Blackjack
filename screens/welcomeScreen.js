@@ -2,7 +2,7 @@ import React from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Colors } from "../styles/theme";
 
-export default function WelcomeScreen({ user, onPlay, onStats, onSignOut }) {
+export default function WelcomeScreen({ user, onPlay, onStats, onHistory, onSignOut }) {
   const displayName = user?.displayName || user?.email?.split("@")[0] || "Player";
 
   return (
@@ -27,6 +27,11 @@ export default function WelcomeScreen({ user, onPlay, onStats, onSignOut }) {
         <Pressable style={[styles.btn, styles.btnSecondary]} onPress={onStats}>
           <Text style={styles.btnIcon}>📊</Text>
           <Text style={styles.btnText}>My Stats</Text>
+        </Pressable>
+
+        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={onHistory}>
+          <Text style={styles.btnIcon}>🕘</Text>
+          <Text style={styles.btnText}>Game History</Text>
         </Pressable>
 
         <Pressable style={[styles.btn, styles.btnDanger]} onPress={onSignOut}>
