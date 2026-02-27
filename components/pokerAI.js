@@ -1,9 +1,12 @@
 // components/pokerAI.js
 // AI decision making for Texas Hold'em poker
+// Logic ported from poker_ai.py
 
 import { evaluateHand } from './pokerHandEvaluator';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+const BIG_BLIND = 20;
+
+// ── Card helpers ───────────────────────────────────────────────────────────────
 
 function rankValue(card) {
   const v = card.slice(0, -1);
@@ -18,39 +21,59 @@ function getSuit(card) {
   return card[card.length - 1];
 }
 
-// ── Pre-flop strength estimate (0–1) ─────────────────────────────────────────
+// ── Hand strength (6 levels) ───────────────────────────────────────────────────
+// Returns: 'very_strong' | 'strong' | 'medium_strong' | 'medium' | 'weak_medium' | 'weak'
 
 function preflopStrength(holeCards) {
-  const [c1, c2] = holeCards;
-  const r1 = rankValue(c1);
-  const r2 = rankValue(c2);
-  const suited = getSuit(c1) === getSuit(c2);
+  const r1  = rankValue(holeCards[0]);
+  const r2  = rankValue(holeCards[1]);
+  const low  = Math.min(r1, r2);
   const high = Math.max(r1, r2);
-  const low = Math.min(r1, r2);
-  const isPair = r1 === r2;
-  const gap = high - low;
+  const suited    = getSuit(holeCards[0]) === getSuit(holeCards[1]);
+  const connector = high - low === 1;
 
-  if (isPair) {
-    // AA=1.0, KK≈0.96, 22≈0.58
-    return 0.58 + (high - 2) * 0.015;
+  // Pocket pairs
+  if (low === high) {
+    if (low >= 12) return 'very_strong';  // QQ, KK, AA
+    if (low >= 8)  return 'medium';       // 88–JJ
+    return 'weak';                         // 22–77
   }
 
-  // Base strength from high + low cards
-  let strength = ((high - 2) / 12) * 0.55 + ((low - 2) / 12) * 0.25;
-  if (suited) strength += 0.07;
-  if (gap === 1) strength += 0.05; // connected
-  if (gap === 0) strength += 0.03; // shouldn't happen (pair handled above)
+  // At least one high card (J or better)
+  if (high >= 11) {
+    if (high === 14) {
+      // Ace in hand — any suited Ace is very strong; any offsuit Ace is medium
+      return suited ? 'very_strong' : 'medium';
+    }
+    // J–K without Ace
+    if (suited && connector && high >= 12) return 'medium'; // QJs, KQs
+    if (suited && low >= 10 && high >= 13) return 'medium'; // KTs
+  }
 
-  return Math.min(strength, 0.92);
+  // Suited connectors / suited gappers in mid-range
+  if (suited && connector && high >= 8)   return 'medium'; // 78s–9Ts
+  if (suited && low >= 7  && high >= 9)   return 'medium'; // suited 7-9 range
+
+  return 'weak';
 }
 
-// ── Post-flop strength (0–1) from hand score ──────────────────────────────────
-
 function postflopStrength(holeCards, communityCards) {
-  const allCards = [...holeCards, ...communityCards];
-  const result = evaluateHand(allCards);
-  // score 1–9 → normalize to 0–1
-  return (result.score - 1) / 8;
+  const result = evaluateHand([...holeCards, ...communityCards]);
+  // JS evaluator scores: 9=SF/Royal, 8=Quads, 7=Full House, 6=Flush,
+  //   5=Straight, 4=Trips, 3=Two Pair, 2=Pair, 1=High Card
+  // Mapped to match Python hand_type_id thresholds (>= 7, >= 5, >= 4, >= 2, >= 1)
+  if (result.score >= 8) return 'very_strong';   // Quads, Straight Flush, Royal Flush
+  if (result.score >= 6) return 'strong';         // Full House, Flush
+  if (result.score >= 5) return 'medium_strong';  // Straight
+  if (result.score >= 3) return 'medium';          // Three of a Kind, Two Pair
+  if (result.score >= 2) return 'weak_medium';    // One Pair
+  return 'weak';                                   // High Card
+}
+
+function evaluateStrength(holeCards, communityCards) {
+  return communityCards.length === 0
+    ? preflopStrength(holeCards)
+    : postflopStrength(holeCards, communityCards);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -65,21 +88,39 @@ function postflopStrength(holeCards, communityCards) {
  * @returns {'fold' | 'check' | 'call' | 'raise'}
  */
 export function getPokerAiDecision(aiHoleCards, communityCards, pot, aiToCall, aiStack) {
-  const isPreflop = communityCards.length === 0;
-  const strength = isPreflop
-    ? preflopStrength(aiHoleCards)
-    : postflopStrength(aiHoleCards, communityCards);
+  const strength   = evaluateStrength(aiHoleCards, communityCards);
+  const facingBet  = aiToCall > 0;
 
-  const facingBet = aiToCall > 0;
-
-  if (isPreflop) {
-    if (strength > 0.78) return 'raise';
-    if (strength > 0.48) return facingBet ? 'call' : 'check';
-    return facingBet ? 'fold' : 'check';
+  if (!facingBet) {
+    // Can check — bet/raise with strong hands, check with everything else
+    if (strength === 'very_strong' || strength === 'strong' || strength === 'medium_strong') {
+      return aiStack > 0 ? 'raise' : 'check';
+    }
+    return 'check';
   }
 
-  // Post-flop thresholds
-  if (strength > 0.625) return 'raise';
-  if (strength > 0.25) return facingBet ? 'call' : 'check';
-  return facingBet ? 'fold' : 'check';
+  // Facing a bet — use call ratio for pot-odds-style decision
+  const callRatio = aiStack > 0 ? aiToCall / aiStack : Infinity;
+
+  switch (strength) {
+    case 'very_strong':
+      // Always stay in; re-raise when possible
+      return aiStack >= aiToCall + BIG_BLIND ? 'raise' : 'call';
+
+    case 'strong':
+      // Re-raise if affordable and not too large relative to stack; else call
+      return (callRatio <= 1.0 && aiStack >= aiToCall + BIG_BLIND) ? 'raise' : 'call';
+
+    case 'medium_strong':
+      return callRatio <= 0.5 ? 'call' : 'fold';
+
+    case 'medium':
+      return callRatio <= 0.2 ? 'call' : 'fold';
+
+    case 'weak_medium':
+      return (callRatio <= 0.1 && aiToCall <= BIG_BLIND * 2) ? 'call' : 'fold';
+
+    default: // 'weak'
+      return (callRatio <= 0.05 && aiToCall <= BIG_BLIND) ? 'call' : 'fold';
+  }
 }
