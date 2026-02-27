@@ -6,8 +6,8 @@ import {
   Pressable,
   ScrollView,
   SafeAreaView,
+  StyleSheet,
 } from "react-native";
-import { signOut } from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
@@ -16,6 +16,7 @@ import { makeNewDeck, shuffleDeck, deal } from "../components/deck";
 import { cardImages } from "../components/cardImages";
 import { getDealerDecision } from "../components/aiPlayer";
 import { auth, db } from "../firebaseConfig";
+import { Colors } from "../styles/theme";
 
 // ── Stats (AsyncStorage) ──────────────────────────────────────────────────────
 
@@ -40,56 +41,100 @@ async function saveGame(result, playerHand, dealerHand, getScore) {
   if (!user) return;
   try {
     await addDoc(collection(db, "games"), {
-      userId: user.uid,
-      result,                          // 'win' | 'loss' | 'push' | 'bust'
+      userId:      user.uid,
+      gameType:    "blackjack",
+      result,
       playerScore: getScore(playerHand),
       dealerScore: getScore(dealerHand),
       playerHand,
       dealerHand,
-      playedAt: serverTimestamp(),
+      playedAt:    serverTimestamp(),
     });
   } catch (e) {
     console.error("saveGame failed:", e.message);
   }
 }
 
+// ── Score helpers ─────────────────────────────────────────────────────────────
+
+function scoreHand(hand) {
+  let total = 0, aces = 0;
+  for (const card of hand) {
+    const v = card.slice(0, -1);
+    if (v === "A") { total += 11; aces++; }
+    else if (["K", "Q", "J"].includes(v)) total += 10;
+    else total += Number(v);
+  }
+  while (total > 21 && aces > 0) { total -= 10; aces--; }
+  return { total, soft: aces > 0 && total <= 21 };
+}
+
+function getScore(hand) { return scoreHand(hand).total; }
+
+function scoreLabel(hand, hideSecond = false) {
+  if (!hand.length) return "—";
+  const visible = hideSecond ? [hand[0]] : hand;
+  const { total, soft } = scoreHand(visible);
+  return soft ? `${total}` : `${total}`;
+}
+
+function isSoftHand(hand, hideSecond = false) {
+  const visible = hideSecond ? [hand[0]] : hand;
+  return scoreHand(visible).soft;
+}
+
+// ── Result config ─────────────────────────────────────────────────────────────
+
+const RESULT_CFG = {
+  win:  { label: "You Win!",       color: "#4cff80", bg: "rgba(20,120,50,0.25)", border: "#4cff80" },
+  loss: { label: "Dealer Wins",    color: "#ff5555", bg: "rgba(120,20,20,0.25)", border: "#ff5555" },
+  push: { label: "Push — Tie",     color: "#FFD700", bg: "rgba(120,100,0,0.25)",  border: "#FFD700" },
+  bust: { label: "Bust!",          color: "#ff5555", bg: "rgba(120,20,20,0.25)", border: "#ff5555" },
+};
+
+// ── ScoreChip ─────────────────────────────────────────────────────────────────
+
+function ScoreChip({ score, soft, hidden }) {
+  if (hidden) {
+    return (
+      <View style={[chip.wrap, { borderColor: Colors.border }]}>
+        <Text style={chip.val}>?</Text>
+      </View>
+    );
+  }
+  const bust = score > 21;
+  const bj   = score === 21;
+  const color = bust ? Colors.redLight : bj ? Colors.gold : Colors.white;
+  return (
+    <View style={[chip.wrap, { borderColor: bust ? Colors.redLight : bj ? Colors.gold : Colors.border }]}>
+      <Text style={[chip.val, { color }]}>{score}</Text>
+      {soft && !bust && <Text style={chip.soft}>soft</Text>}
+    </View>
+  );
+}
+
+const chip = StyleSheet.create({
+  wrap: {
+    borderRadius: 22,
+    borderWidth: 1.5,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    alignSelf: "flex-start",
+    backgroundColor: Colors.bgCard,
+    alignItems: "center",
+  },
+  val:  { fontSize: 22, fontWeight: "900", color: Colors.white, lineHeight: 26 },
+  soft: { fontSize: 9,  fontWeight: "700", color: Colors.goldDim, letterSpacing: 1, textTransform: "uppercase", marginTop: -2 },
+});
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
-// phase: 'player' → 'dealer' → 'done'
-
 export default function GameScreen({ onExitToWelcome }) {
-  const [deck, setDeck] = useState([]);
+  const [deck,       setDeck]       = useState([]);
   const [playerHand, setPlayerHand] = useState([]);
   const [dealerHand, setDealerHand] = useState([]);
-  const [phase, setPhase] = useState("player");
-  const [result, setResult] = useState(null); // 'win' | 'loss' | 'push' | 'bust'
-
-  // ── Scoring ───────────────────────────────────────────────────────────────
-
-  const scoreHand = (hand) => {
-    let total = 0;
-    let aces = 0;
-    for (const card of hand) {
-      const v = card.slice(0, -1);
-      if (v === "A") { total += 11; aces++; }
-      else if (["K", "Q", "J"].includes(v)) total += 10;
-      else total += Number(v);
-    }
-    while (total > 21 && aces > 0) { total -= 10; aces--; }
-    const soft = aces > 0 && total <= 21;
-    return { total, soft };
-  };
-
-  const getScore = (hand) => scoreHand(hand).total;
-
-  const scoreLabel = (hand, hideSecond = false) => {
-    if (!hand.length) return "—";
-    const visibleHand = hideSecond ? [hand[0]] : hand;
-    const { total, soft } = scoreHand(visibleHand);
-    return soft ? `${total} (soft)` : `${total}`;
-  };
-
-  // ── Deck helper ───────────────────────────────────────────────────────────
+  const [phase,      setPhase]      = useState("player"); // 'player' | 'dealer' | 'done'
+  const [result,     setResult]     = useState(null);
 
   const drawCard = (currentDeck) => {
     const r = deal(currentDeck, 1);
@@ -101,37 +146,31 @@ export default function GameScreen({ onExitToWelcome }) {
   const startGame = () => {
     let d = shuffleDeck(makeNewDeck());
     const p = [], dlr = [];
-
     for (let i = 0; i < 2; i++) {
       let r;
       r = drawCard(d); d = r.deck; p.push(r.card);
       r = drawCard(d); d = r.deck; dlr.push(r.card);
     }
 
-    const playerScore = getScore(p);
-    const dealerScore = getScore(dlr);
-    const playerBJ = playerScore === 21;
-    const dealerBJ = dealerScore === 21;
+    const pScore = getScore(p);
+    const dScore = getScore(dlr);
+    const pBJ = pScore === 21 && p.length === 2;
+    const dBJ = dScore === 21 && dlr.length === 2;
 
     setPlayerHand(p);
     setDealerHand(dlr);
     setDeck(d);
     setResult(null);
 
-    if (playerBJ && dealerBJ) {
-      setPhase("done");
-      setResult("push");
+    if (pBJ && dBJ) {
+      setPhase("done"); setResult("push");
       saveGame("push", p, dlr, getScore);
-    } else if (playerBJ) {
-      setPhase("done");
-      setResult("win");
-      recordResult("win");
-      saveGame("win", p, dlr, getScore);
-    } else if (dealerBJ) {
-      setPhase("done");
-      setResult("loss");
-      recordResult("loss");
-      saveGame("loss", p, dlr, getScore);
+    } else if (pBJ) {
+      setPhase("done"); setResult("win");
+      recordResult("win"); saveGame("win", p, dlr, getScore);
+    } else if (dBJ) {
+      setPhase("done"); setResult("loss");
+      recordResult("loss"); saveGame("loss", p, dlr, getScore);
     } else {
       setPhase("player");
     }
@@ -140,13 +179,10 @@ export default function GameScreen({ onExitToWelcome }) {
   useEffect(() => { startGame(); }, []);
 
   // ── AI Dealer auto-play ───────────────────────────────────────────────────
-  // The dealer uses basic strategy, looking at the player's face-up card.
-  // Re-runs every time dealerHand changes while phase is 'dealer'.
 
   useEffect(() => {
-    if (phase !== "dealer" || dealerHand.length === 0 || playerHand.length === 0) return;
+    if (phase !== "dealer" || !dealerHand.length || !playerHand.length) return;
 
-    // Dealer busted — resolve immediately
     if (getScore(dealerHand) > 21) {
       setResult("win");
       recordResult("win");
@@ -156,30 +192,21 @@ export default function GameScreen({ onExitToWelcome }) {
     }
 
     const decision = getDealerDecision(dealerHand, playerHand);
-
     const timer = setTimeout(() => {
       if (decision === "stand") {
-        // Dealer stands — resolve
-        const dealerScore = getScore(dealerHand);
-        const playerScore = getScore(playerHand);
-        let res;
-        if (dealerScore > playerScore) res = "loss";
-        else if (playerScore > dealerScore) res = "win";
-        else res = "push";
+        const ds = getScore(dealerHand), ps = getScore(playerHand);
+        const res = ds > ps ? "loss" : ps > ds ? "win" : "push";
         setResult(res);
-        if (res === "win") recordResult("win");
-        else if (res === "loss") recordResult("loss");
+        if (res === "win")  recordResult("win");
+        if (res === "loss") recordResult("loss");
         saveGame(res, playerHand, dealerHand, getScore);
         setPhase("done");
       } else {
-        // hit or double — dealer draws one card
-        const { card, deck: newDeck } = drawCard(deck);
-        const next = [...dealerHand, card];
-        setDealerHand(next);
-        setDeck(newDeck);
-        // effect re-runs with new dealerHand
+        const { card, deck: nd } = drawCard(deck);
+        setDealerHand(prev => [...prev, card]);
+        setDeck(nd);
       }
-    }, 750);
+    }, 700);
 
     return () => clearTimeout(timer);
   }, [dealerHand, phase, deck, playerHand]);
@@ -188,13 +215,12 @@ export default function GameScreen({ onExitToWelcome }) {
 
   const handleHit = () => {
     if (phase !== "player") return;
-    const { card, deck: newDeck } = drawCard(deck);
+    const { card, deck: nd } = drawCard(deck);
     const next = [...playerHand, card];
     setPlayerHand(next);
-    setDeck(newDeck);
+    setDeck(nd);
     if (getScore(next) > 21) {
-      setResult("bust");
-      recordResult("loss");
+      setResult("bust"); recordResult("loss");
       saveGame("bust", next, dealerHand, getScore);
       setPhase("done");
     }
@@ -205,146 +231,291 @@ export default function GameScreen({ onExitToWelcome }) {
     setPhase("dealer");
   };
 
-  const handleDoubleDown = () => {
+  const handleDouble = () => {
     if (phase !== "player" || playerHand.length !== 2) return;
-    const { card, deck: newDeck } = drawCard(deck);
+    const { card, deck: nd } = drawCard(deck);
     const next = [...playerHand, card];
     setPlayerHand(next);
-    setDeck(newDeck);
+    setDeck(nd);
     if (getScore(next) > 21) {
-      setResult("bust");
-      recordResult("loss");
+      setResult("bust"); recordResult("loss");
       saveGame("bust", next, dealerHand, getScore);
       setPhase("done");
-      return;
+    } else {
+      setPhase("dealer");
     }
-    setPhase("dealer");
   };
 
-  // ── Render helpers ────────────────────────────────────────────────────────
+  // ── Derived values ────────────────────────────────────────────────────────
 
-  const safeImage = (code) => cardImages[code];
-  const hideHole = phase === "player";
+  const hideHole  = phase === "player";
+  const canAct    = phase === "player";
+  const isDone    = phase === "done";
+  const cfg       = result ? RESULT_CFG[result] : null;
 
-  const RESULT_COLOR = { win: "#4cff80", loss: "#ff5555", push: "#FFD700", bust: "#ff5555" };
-  const RESULT_MSG = {
-    win: "You win!",
-    loss: "Dealer wins.",
-    push: "Push — Tie!",
-    bust: "Busted!",
-  };
-
-  const canAct = phase === "player";
+  const pScore = playerHand.length ? getScore(playerHand) : 0;
+  const pSoft  = playerHand.length ? isSoftHand(playerHand) : false;
+  const dScore = dealerHand.length ? (hideHole ? getScore([dealerHand[0]]) : getScore(dealerHand)) : 0;
+  const dSoft  = dealerHand.length ? isSoftHand(dealerHand, hideHole) : false;
 
   return (
     <SafeAreaView style={gameStyles.container}>
       <ScrollView
-        contentContainerStyle={gameStyles.scrollContent}
+        contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={gameStyles.title}>Blackjack</Text>
-
-        {/* Phase indicator */}
-        {phase !== "done" && (
-          <Text style={gameStyles.phaseText}>
-            {phase === "player" ? "Your turn" : "Dealer is playing…"}
-          </Text>
-        )}
-
-        {/* ── DEALER ──────────────────────────────────────────────────── */}
-        <View style={gameStyles.divider} />
-        <Text style={gameStyles.sectionLabel}>Dealer (AI)</Text>
-        <Text style={gameStyles.scoreText}>
-          Score: {scoreLabel(dealerHand, hideHole)}
-        </Text>
-        <View style={gameStyles.handRow}>
-          {dealerHand.map((c, idx) =>
-            hideHole && idx === 1 ? (
-              <View key={`d-back-${idx}`} style={gameStyles.cardBack}>
-                <View style={gameStyles.cardBackInner} />
-              </View>
-            ) : (
-              <Image
-                key={`d-${c}-${idx}`}
-                source={safeImage(c)}
-                style={gameStyles.cardImage}
-              />
-            )
+        {/* ── Header ── */}
+        <View style={s.header}>
+          <Text style={s.title}>Blackjack</Text>
+          {!isDone && (
+            <View style={s.phasePill}>
+              <Text style={s.phaseText}>
+                {phase === "player" ? "Your Turn" : "Dealer Playing…"}
+              </Text>
+            </View>
           )}
         </View>
 
-        {/* ── PLAYER ──────────────────────────────────────────────────── */}
-        <View style={gameStyles.divider} />
-        <Text style={gameStyles.sectionLabel}>You</Text>
-        <Text style={gameStyles.scoreText}>Score: {scoreLabel(playerHand)}</Text>
-        <View style={gameStyles.handRow}>
-          {playerHand.map((c, idx) => (
-            <Image
-              key={`p-${c}-${idx}`}
-              source={safeImage(c)}
-              style={gameStyles.cardImage}
+        {/* ── Dealer panel ── */}
+        <View style={[s.panel, phase === "dealer" && s.panelActive]}>
+          <View style={s.panelHeader}>
+            <Text style={s.panelLabel}>Dealer</Text>
+            <ScoreChip score={dScore} soft={dSoft} hidden={hideHole && dealerHand.length > 1} />
+          </View>
+          <View style={gameStyles.handRow}>
+            {dealerHand.map((c, idx) =>
+              hideHole && idx === 1 ? (
+                <View key={`d-back-${idx}`} style={gameStyles.cardBack}>
+                  <View style={gameStyles.cardBackInner} />
+                </View>
+              ) : (
+                <Image key={`d-${c}-${idx}`} source={cardImages[c]} style={gameStyles.cardImage} />
+              )
+            )}
+          </View>
+        </View>
+
+        {/* ── Result banner ── */}
+        {cfg && (
+          <View style={[s.resultBanner, { backgroundColor: cfg.bg, borderColor: cfg.border }]}>
+            <Text style={[s.resultText, { color: cfg.color }]}>{cfg.label}</Text>
+          </View>
+        )}
+
+        {/* ── Player panel ── */}
+        <View style={[s.panel, phase === "player" && s.panelActive]}>
+          <View style={s.panelHeader}>
+            <Text style={s.panelLabel}>You</Text>
+            <ScoreChip score={pScore} soft={pSoft} />
+          </View>
+          <View style={gameStyles.handRow}>
+            {playerHand.map((c, idx) => (
+              <Image key={`p-${c}-${idx}`} source={cardImages[c]} style={gameStyles.cardImage} />
+            ))}
+          </View>
+        </View>
+
+        {/* ── Action buttons ── */}
+        {canAct && (
+          <View style={s.actionRow}>
+            <ActionBtn label="Hit"    onPress={handleHit} />
+            <ActionBtn label="Stand"  onPress={handleStand} />
+            <ActionBtn
+              label="2×"
+              sub="Double"
+              onPress={handleDouble}
+              disabled={playerHand.length !== 2}
+              gold
             />
-          ))}
-        </View>
+          </View>
+        )}
 
-        {/* Result */}
-        {result ? (
-          <Text style={[gameStyles.message, { color: RESULT_COLOR[result] }]}>
-            {RESULT_MSG[result]}
-          </Text>
-        ) : null}
-
-        {/* ── Action buttons ───────────────────────────────────────────── */}
-        <View style={gameStyles.buttonRow}>
-          <Pressable
-            style={[gameStyles.button, !canAct && gameStyles.buttonDisabled]}
-            onPress={handleHit}
-            disabled={!canAct}
-          >
-            <Text style={gameStyles.buttonText}>Hit</Text>
+        {/* ── Nav row ── */}
+        <View style={s.navRow}>
+          <Pressable style={s.navBtn} onPress={startGame}>
+            <Text style={s.navBtnText}>New Game</Text>
           </Pressable>
-
-          <Pressable
-            style={[gameStyles.button, !canAct && gameStyles.buttonDisabled]}
-            onPress={handleStand}
-            disabled={!canAct}
-          >
-            <Text style={gameStyles.buttonText}>Stand</Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              gameStyles.button,
-              gameStyles.buttonGold,
-              (!canAct || playerHand.length !== 2) && gameStyles.buttonDisabled,
-            ]}
-            onPress={handleDoubleDown}
-            disabled={!canAct || playerHand.length !== 2}
-          >
-            <Text style={gameStyles.buttonText}>Double</Text>
+          <Pressable style={s.navBtn} onPress={() => onExitToWelcome?.()}>
+            <Text style={s.navBtnText}>← Menu</Text>
           </Pressable>
         </View>
 
-        <View style={gameStyles.divider} />
-
-        <Pressable style={gameStyles.button} onPress={startGame}>
-          <Text style={gameStyles.buttonText}>New Game</Text>
-        </Pressable>
-
-        <Pressable
-          style={[gameStyles.button, { marginTop: 6 }]}
-          onPress={() => onExitToWelcome && onExitToWelcome()}
-        >
-          <Text style={gameStyles.buttonText}>← Menu</Text>
-        </Pressable>
-
-        <Pressable
-          style={[gameStyles.button, gameStyles.buttonDanger, { marginTop: 6 }]}
-          onPress={() => signOut(auth)}
-        >
-          <Text style={gameStyles.buttonText}>Log Out</Text>
-        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+// ── ActionBtn ─────────────────────────────────────────────────────────────────
+
+function ActionBtn({ label, sub, onPress, disabled, gold }) {
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        ab.btn,
+        gold && ab.gold,
+        disabled && ab.disabled,
+        pressed && !disabled && ab.pressed,
+      ]}
+      onPress={onPress}
+      disabled={!!disabled}
+    >
+      <Text style={ab.label}>{label}</Text>
+      {sub ? <Text style={ab.sub}>{sub}</Text> : null}
+    </Pressable>
+  );
+}
+
+const ab = StyleSheet.create({
+  btn: {
+    flex: 1,
+    backgroundColor: Colors.green,
+    borderWidth: 1,
+    borderColor: Colors.greenLight,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
+    elevation: 5,
+  },
+  gold:     { backgroundColor: Colors.goldDeep, borderColor: Colors.goldDim },
+  disabled: { opacity: 0.25 },
+  pressed:  { opacity: 0.8 },
+  label:    { color: Colors.white, fontSize: 16, fontWeight: "900", letterSpacing: 0.5 },
+  sub:      { color: Colors.goldDim, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginTop: 2 },
+});
+
+// ── Local styles ──────────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
+  scroll: {
+    alignItems: "center",
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    width: "100%",
+  },
+
+  header: {
+    width: "100%",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+
+  title: {
+    fontSize: 30,
+    fontWeight: "900",
+    color: Colors.gold,
+    letterSpacing: 4,
+    textShadowColor: "rgba(255,215,0,0.25)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
+    marginBottom: 8,
+  },
+
+  phasePill: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+
+  phaseText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: Colors.goldDim,
+    letterSpacing: 2,
+    textTransform: "uppercase",
+  },
+
+  // ── Panels ────────────────────────────────────────────────────────────────
+  panel: {
+    width: "100%",
+    backgroundColor: Colors.felt,
+    borderRadius: 16,
+    padding: 16,
+    marginVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+
+  panelActive: {
+    borderColor: Colors.gold,
+    shadowColor: Colors.gold,
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    elevation: 10,
+  },
+
+  panelHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+
+  panelLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: Colors.goldDim,
+    letterSpacing: 2.5,
+    textTransform: "uppercase",
+  },
+
+  // ── Result ────────────────────────────────────────────────────────────────
+  resultBanner: {
+    width: "100%",
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: "center",
+    marginVertical: 6,
+    borderWidth: 1.5,
+  },
+
+  resultText: {
+    fontSize: 26,
+    fontWeight: "900",
+    letterSpacing: 3,
+    textTransform: "uppercase",
+  },
+
+  // ── Buttons ───────────────────────────────────────────────────────────────
+  actionRow: {
+    flexDirection: "row",
+    width: "100%",
+    gap: 8,
+    marginTop: 8,
+  },
+
+  navRow: {
+    flexDirection: "row",
+    width: "100%",
+    gap: 10,
+    marginTop: 14,
+  },
+
+  navBtn: {
+    flex: 1,
+    backgroundColor: Colors.bgCard,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 11,
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+
+  navBtnText: {
+    color: Colors.textMuted,
+    fontSize: 14,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+});

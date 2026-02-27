@@ -1,6 +1,5 @@
 // screens/PokerScreen.js
-// Texas Hold'em Poker — 5-player (1 human + 4 AI), v2
-// Custom PanResponder bet slider; ref-based mutual recursion avoids stale closures.
+// Texas Hold'em Poker — 1 human + 4 AI
 
 import React, { useEffect, useState, useRef } from 'react';
 import {
@@ -8,21 +7,32 @@ import {
   StyleSheet, PanResponder, Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 import { gameStyles } from '../styles/GameStyles';
 import { makeNewDeck, shuffleDeck, deal } from '../components/deck';
 import { cardImages } from '../components/cardImages';
 import { evaluateHand, compareHands } from '../components/pokerHandEvaluator';
 import { getPokerAiDecision } from '../components/pokerAI';
+import { auth, db } from '../firebaseConfig';
 import { Colors } from '../styles/theme';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const STARTING_STACK = 1000;
-const SMALL_BLIND     = 10;
-const BIG_BLIND       = 20;
+const SMALL_BLIND    = 10;
+const BIG_BLIND      = 20;
 const POKER_STATS_KEY = 'poker_stats_v1';
 const AI_NAMES        = ['Alex', 'Blake', 'Casey', 'Dana'];
+
+const STREET_LABEL = {
+  preflop:  'Pre-Flop',
+  flop:     'Flop',
+  turn:     'Turn',
+  river:    'River',
+  showdown: 'Showdown',
+  done:     'Hand Over',
+};
 
 // ── Pure helpers ───────────────────────────────────────────────────────────────
 
@@ -42,7 +52,6 @@ function makePlayers() {
 
 function snap5(n) { return Math.round(n / 5) * 5; }
 
-// Active players who can still bet (not folded, have chips)
 function activeBettors(players) {
   return [0, 1, 2, 3, 4].filter(id => {
     const p = players.find(x => x.id === id);
@@ -50,7 +59,6 @@ function activeBettors(players) {
   });
 }
 
-// Preflop: SB (player 0) first, BB (AI id=1) last option — order [0,2,3,4,1]
 function preflopOrder(players) {
   return [0, 2, 3, 4, 1].filter(id => {
     const p = players.find(x => x.id === id);
@@ -58,20 +66,13 @@ function preflopOrder(players) {
   });
 }
 
-// Post-flop: player first, then AIs [0,1,2,3,4]
-function postFlopOrder(players) {
-  return activeBettors(players);
-}
+function postFlopOrder(players) { return activeBettors(players); }
 
-// After a raise: everyone AFTER the raiser must respond (wrap around, exclude raiser)
 function toActAfterRaise(raiserId, players) {
   const active = activeBettors(players);
   const idx    = active.indexOf(raiserId);
   if (idx === -1) return active;
-  return [
-    ...active.slice(idx + 1),
-    ...active.slice(0, idx),
-  ];
+  return [...active.slice(idx + 1), ...active.slice(0, idx)];
 }
 
 // ── Persistence ────────────────────────────────────────────────────────────────
@@ -89,15 +90,31 @@ async function recordPokerResult(result) {
   }
 }
 
+async function savePokerGame(result, humanStack) {
+  const user = auth.currentUser;
+  if (!user) return;
+  try {
+    await addDoc(collection(db, 'games'), {
+      userId:      user.uid,
+      gameType:    'poker',
+      result,
+      playerScore: humanStack,
+      dealerScore: null,
+      playerHand:  null,
+      dealerHand:  null,
+      playedAt:    serverTimestamp(),
+    });
+  } catch (e) {
+    console.error('savePokerGame failed:', e);
+  }
+}
+
 // ── BetSlider ──────────────────────────────────────────────────────────────────
-// PanResponder-based drag slider. No external libraries needed.
 
 function BetSlider({ min, max, value, onValueChange }) {
-  const trackRef   = useRef(null);
-  const trackInfo  = useRef({ x: 0, width: 300 });
-  // handleRef is updated every render so the PanResponder (created once) always
-  // calls the latest onValueChange with the latest min/max.
-  const handleRef  = useRef(null);
+  const trackRef  = useRef(null);
+  const trackInfo = useRef({ x: 0, width: 300 });
+  const handleRef = useRef(null);
   handleRef.current = (pageX) => {
     const { x, width } = trackInfo.current;
     if (width <= 0) return;
@@ -120,10 +137,10 @@ function BetSlider({ min, max, value, onValueChange }) {
   const pct     = ((value - min) / (safeMax - min)) * 100;
 
   return (
-    <View style={slStyles.wrap}>
+    <View style={sl.wrap}>
       <View
         ref={trackRef}
-        style={slStyles.track}
+        style={sl.track}
         onLayout={() => {
           trackRef.current?.measure((_fx, _fy, w, _h, px) => {
             trackInfo.current = { x: px, width: w };
@@ -131,161 +148,201 @@ function BetSlider({ min, max, value, onValueChange }) {
         }}
         {...pr.panHandlers}
       >
-        <View style={[slStyles.fill, { width: `${pct}%` }]} />
-        <View style={[slStyles.knob, { left: `${pct}%` }]} />
+        <View style={[sl.fill, { width: `${pct}%` }]} />
+        <View style={[sl.knob, { left: `${pct}%` }]} />
       </View>
     </View>
   );
 }
 
-const slStyles = StyleSheet.create({
-  wrap:  { width: '100%', paddingVertical: 16 },
+const sl = StyleSheet.create({
+  wrap:  { width: '100%', paddingVertical: 18 },
   track: {
-    width: '100%', height: 8,
-    backgroundColor: '#0d1a0d',
-    borderRadius: 4,
-    borderWidth: 1, borderColor: Colors.border,
+    width: '100%', height: 6,
+    backgroundColor: Colors.bgInput,
+    borderRadius: 3, borderWidth: 1, borderColor: Colors.border,
   },
   fill: {
     position: 'absolute', left: 0, top: 0,
-    height: '100%', backgroundColor: Colors.gold, borderRadius: 4,
+    height: '100%', backgroundColor: Colors.gold, borderRadius: 3,
   },
   knob: {
-    position: 'absolute', top: -11,
-    width: 30, height: 30, marginLeft: -15,
-    borderRadius: 15,
-    backgroundColor: Colors.gold,
-    borderWidth: 2, borderColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5, shadowRadius: 4, elevation: 4,
+    position: 'absolute', top: -12,
+    width: 28, height: 28, marginLeft: -14,
+    borderRadius: 14, backgroundColor: Colors.gold,
+    borderWidth: 2.5, borderColor: Colors.white,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.55, shadowRadius: 5, elevation: 5,
   },
 });
 
 // ── AiSeat ─────────────────────────────────────────────────────────────────────
 
-function AiSeat({ player, isActive, compact }) {
+function AiSeat({ player, isActive, lastAction, compact }) {
   const { name, stack, streetBet, folded, revealed, hand, handName } = player;
+  const cardSize = compact ? { width: 22, height: 32 } : { width: 28, height: 42 };
+  const cardInner = compact ? { width: 16, height: 26 } : { width: 20, height: 34 };
+
   return (
-    <View style={[aStyles.box, isActive && aStyles.glow, folded && aStyles.faded, compact && aStyles.boxCompact]}>
-      <Text style={[aStyles.name, compact && aStyles.nameCompact]} numberOfLines={1}>{name}</Text>
-      <View style={aStyles.cardRow}>
+    <View style={[
+      as.box,
+      isActive && as.glow,
+      folded && as.faded,
+      compact && as.compact,
+    ]}>
+      {/* Name row */}
+      <View style={as.nameRow}>
+        <Text style={[as.name, compact && as.nameCompact]} numberOfLines={1}>{name}</Text>
+        {folded && <Text style={as.foldTag}>FOLD</Text>}
+      </View>
+
+      {/* Cards */}
+      <View style={as.cardRow}>
         {hand.map((card, i) =>
           revealed && !folded && cardImages[card]
-            ? <Image key={i} source={cardImages[card]} style={compact ? aStyles.cardCompact : aStyles.card} />
-            : (
-              <View key={i} style={compact ? aStyles.cardBackCompact : aStyles.cardBack}>
-                <View style={compact ? aStyles.cardBackInnerCompact : aStyles.cardBackInner} />
+            ? (
+              <Image
+                key={i}
+                source={cardImages[card]}
+                style={[as.card, cardSize]}
+              />
+            ) : (
+              <View key={i} style={[as.cardBack, cardSize, folded && as.cardFolded]}>
+                {!folded && <View style={[as.cardBackInner, cardInner]} />}
               </View>
             )
         )}
       </View>
-      {revealed && handName
-        ? <Text style={aStyles.handName} numberOfLines={1}>{handName}</Text>
+
+      {/* Hand name (showdown) */}
+      {revealed && handName && !folded
+        ? <Text style={as.handName} numberOfLines={1}>{handName}</Text>
         : null}
-      <Text style={[aStyles.stack, compact && aStyles.stackCompact]}>{stack}</Text>
-      {streetBet > 0 ? <Text style={aStyles.bet}>Bet: {streetBet}</Text> : null}
-      {isActive      ? <Text style={aStyles.thinking}>thinking…</Text>    : null}
+
+      {/* Stack + bet */}
+      <View style={as.footRow}>
+        <Text style={[as.stack, compact && as.stackCompact]}>{stack}</Text>
+        {streetBet > 0 && <Text style={as.bet}>{streetBet}</Text>}
+      </View>
+
+      {/* Status */}
+      {isActive
+        ? <Text style={as.thinking}>thinking…</Text>
+        : lastAction && !folded
+          ? <Text style={as.lastAction} numberOfLines={1}>{lastAction}</Text>
+          : null}
     </View>
   );
 }
 
-const aStyles = StyleSheet.create({
+const as = StyleSheet.create({
   box: {
-    width: '48%', minHeight: 118,
+    width: '48%',
     backgroundColor: Colors.bgCard,
-    borderRadius: 10, padding: 8, margin: '1%',
+    borderRadius: 12, padding: 10, margin: '1%',
     borderWidth: 1, borderColor: Colors.border,
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4, shadowRadius: 6, elevation: 4,
   },
+  compact: { padding: 7, borderRadius: 10 },
   glow: {
     borderColor: Colors.gold,
     shadowColor: Colors.gold,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8, shadowRadius: 10, elevation: 10,
+    shadowOpacity: 0.6, shadowRadius: 12, elevation: 10,
   },
-  faded:       { opacity: 0.38 },
-  name:        { color: Colors.gold,    fontSize: 13, fontWeight: '700', marginBottom: 4 },
-  cardRow:     { flexDirection: 'row',  gap: 4,       marginBottom: 4 },
-  card:        { width: 30, height: 44, resizeMode: 'contain', backgroundColor: Colors.white, borderRadius: 4, borderWidth: 1, borderColor: '#ccc' },
-  cardBack:    { width: 30, height: 44, backgroundColor: '#1a3a8f', borderRadius: 4, borderWidth: 1, borderColor: '#fff', justifyContent: 'center', alignItems: 'center' },
-  cardBackInner: { width: 22, height: 36, borderRadius: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', backgroundColor: '#1530a0' },
-  handName:    { color: Colors.goldDim, fontSize: 9,  fontWeight: '700', textAlign: 'center', marginBottom: 2 },
-  stack:       { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
-  bet:         { color: Colors.gold,    fontSize: 11, fontWeight: '600', marginTop: 2 },
-  thinking:    { color: Colors.goldDim, fontSize: 9,  fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginTop: 2 },
-  // ── compact variants for web ──
-  boxCompact:           { minHeight: 76, padding: 5, margin: '1%' },
-  nameCompact:          { fontSize: 11, marginBottom: 2 },
-  cardCompact:          { width: 22, height: 32, resizeMode: 'contain', backgroundColor: Colors.white, borderRadius: 3, borderWidth: 1, borderColor: '#ccc' },
-  cardBackCompact:      { width: 22, height: 32, backgroundColor: '#1a3a8f', borderRadius: 3, borderWidth: 1, borderColor: '#fff', justifyContent: 'center', alignItems: 'center' },
-  cardBackInnerCompact: { width: 16, height: 26, borderRadius: 2, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', backgroundColor: '#1530a0' },
-  stackCompact:         { fontSize: 11 },
+  faded: { opacity: 0.35 },
+
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  name:       { color: Colors.gold, fontSize: 13, fontWeight: '800', letterSpacing: 0.3 },
+  nameCompact: { fontSize: 11 },
+  foldTag: {
+    fontSize: 9, fontWeight: '800', color: Colors.redLight,
+    letterSpacing: 1, borderWidth: 1, borderColor: Colors.red,
+    borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1,
+  },
+
+  cardRow: { flexDirection: 'row', gap: 5, marginBottom: 6 },
+  card: { resizeMode: 'contain', backgroundColor: Colors.white, borderRadius: 4, borderWidth: 1, borderColor: '#ccc' },
+  cardBack: {
+    backgroundColor: Colors.cardBlue, borderRadius: 4,
+    borderWidth: 1, borderColor: Colors.white,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  cardBackInner: { borderRadius: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', backgroundColor: Colors.cardBlueIn },
+  cardFolded: { backgroundColor: Colors.redDark, borderColor: Colors.red, opacity: 0.6 },
+
+  handName: { color: Colors.goldDim, fontSize: 9, fontWeight: '700', textAlign: 'center', marginBottom: 4, letterSpacing: 0.3 },
+
+  footRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  stack:       { color: Colors.textMuted, fontSize: 12, fontWeight: '800' },
+  stackCompact: { fontSize: 11 },
+  bet: {
+    color: Colors.gold, fontSize: 10, fontWeight: '700',
+    backgroundColor: Colors.goldDeep, borderRadius: 4,
+    paddingHorizontal: 5, paddingVertical: 1,
+  },
+
+  thinking:   { color: Colors.goldDim, fontSize: 9, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 4 },
+  lastAction: { color: Colors.textFaint, fontSize: 9, fontWeight: '600', marginTop: 3, letterSpacing: 0.3 },
 });
 
 // ── PokerScreen ────────────────────────────────────────────────────────────────
 
 export default function PokerScreen({ onExitToWelcome }) {
-  const [players,       setPlayers]       = useState(makePlayers);
-  const [community,     setCommunity]     = useState([]);
-  const [deck,          setDeck]          = useState([]);
-  const [phase,         setPhase]         = useState('preflop');
-  const [pot,           setPot]           = useState(0);
-  const [streetMaxBet,  setStreetMaxBet]  = useState(0);
-  const [toAct,         setToAct]         = useState([]);
-  const [aiThinking,    setAiThinking]    = useState(false);
-  const [aiThinkingId,  setAiThinkingId]  = useState(null);
-  const [betValue,      setBetValue]      = useState(BIG_BLIND * 3);
-  const [result,        setResult]        = useState(null);
-  const [statusMsg,     setStatusMsg]     = useState('');
-  const [sessionNet,    setSessionNet]    = useState(0);
+  const [players,      setPlayers]      = useState(makePlayers);
+  const [community,    setCommunity]    = useState([]);
+  const [deck,         setDeck]         = useState([]);
+  const [phase,        setPhase]        = useState('preflop');
+  const [pot,          setPot]          = useState(0);
+  const [streetMaxBet, setStreetMaxBet] = useState(0);
+  const [toAct,        setToAct]        = useState([]);
+  const [aiThinking,   setAiThinking]   = useState(false);
+  const [aiThinkingId, setAiThinkingId] = useState(null);
+  const [betValue,     setBetValue]     = useState(BIG_BLIND * 3);
+  const [result,       setResult]       = useState(null);
+  const [statusMsg,    setStatusMsg]    = useState('');
+  const [sessionNet,   setSessionNet]   = useState(0);
+  const [lastAction,   setLastAction]   = useState({}); // { [playerId]: string }
 
-  // Tracks the human's stack at the start of each hand for session-net calc.
-  const handStartStackRef = useRef(STARTING_STACK);
-
-  // Three refs for mutual recursion.
-  // Each render re-assigns .current so that setTimeout callbacks always call
-  // the freshest version (avoiding stale closures).
+  const handStartStackRef  = useRef(STARTING_STACK);
   const processNextTurnRef  = useRef(null);
   const scheduleAiActionRef = useRef(null);
   const advanceStreetRef    = useRef(null);
-  // Always points to the latest startHand (used in the bust-detection effect).
   const startHandRef        = useRef(null);
 
-  const RESULT_COLOR = { win: '#4cff80', loss: '#ff5555', tie: '#FFD700' };
+  const RESULT_CFG = {
+    win:  { label: 'You Win!',    color: '#4cff80', bg: 'rgba(20,120,50,0.2)',  border: '#4cff80' },
+    loss: { label: 'You Lose',    color: '#ff5555', bg: 'rgba(120,20,20,0.2)',  border: '#ff5555' },
+    tie:  { label: 'Split Pot',   color: Colors.gold, bg: 'rgba(120,100,0,0.2)', border: Colors.gold },
+  };
 
-  // ── Showdown ────────────────────────────────────────────────────────────────
+  // ── Showdown ─────────────────────────────────────────────────────────────────
 
   function resolveShowdown(ps, comm, currentPot) {
     const active = ps.filter(p => !p.folded);
     if (active.length === 0) return;
 
-    // Evaluate & reveal all non-folded hands
     let updated = ps.map(p => {
       if (p.folded) return p;
       const ev = evaluateHand([...p.hand, ...comm]);
       return { ...p, revealed: true, handName: ev.label };
     });
 
-    // Find best hand
     let best = null;
     for (const p of updated.filter(x => !x.folded)) {
-      if (!best || compareHands([...p.hand, ...comm], [...best.hand, ...comm]) > 0) {
-        best = p;
-      }
+      if (!best || compareHands([...p.hand, ...comm], [...best.hand, ...comm]) > 0) best = p;
     }
 
-    // All who tie with best share the pot
     const winners = updated.filter(p =>
-      !p.folded && best &&
-      compareHands([...p.hand, ...comm], [...best.hand, ...comm]) === 0
+      !p.folded && best && compareHands([...p.hand, ...comm], [...best.hand, ...comm]) === 0
     );
     const share = Math.floor(currentPot / winners.length);
     updated = updated.map(p =>
       winners.some(w => w.id === p.id) ? { ...p, stack: p.stack + share } : p
     );
 
-    // Update session net before touching state
     const humanNewStack = updated.find(p => p.id === 0)?.stack ?? 0;
     setSessionNet(prev => prev + (humanNewStack - handStartStackRef.current));
 
@@ -302,20 +359,20 @@ export default function PokerScreen({ onExitToWelcome }) {
     if (humanWins && winners.length === 1) {
       res = 'win';  msg = `You win with ${humanPlayer?.handName}!`;
     } else if (humanWins) {
-      res = 'tie';  msg = `Split pot! ${humanPlayer?.handName}`;
+      res = 'tie';  msg = `Split pot — ${humanPlayer?.handName}`;
     } else {
       const winner = updated.find(p => p.id === best?.id);
-      res = 'loss'; msg = `${winner?.name} wins with ${winner?.handName}!`;
+      res = 'loss'; msg = `${winner?.name} wins — ${winner?.handName}`;
     }
     setResult(res);
     setStatusMsg(msg);
     recordPokerResult(res);
+    savePokerGame(res, humanNewStack);
   }
 
   function endHandLastManStanding(winnerId, ps, currentPot) {
     const winner  = ps.find(p => p.id === winnerId);
     const updated = updatePlayer(ps, winnerId, { stack: (winner?.stack ?? 0) + currentPot });
-    // Update session net
     const humanNewStack = updated.find(p => p.id === 0)?.stack ?? 0;
     setSessionNet(prev => prev + (humanNewStack - handStartStackRef.current));
     setPlayers(updated);
@@ -328,46 +385,38 @@ export default function PokerScreen({ onExitToWelcome }) {
     setResult(res);
     setStatusMsg(
       winnerId === 0
-        ? 'Everyone else folded! You win!'
-        : `${winner?.name} wins — everyone folded.`
+        ? 'Everyone folded — you win!'
+        : `${winner?.name} wins — everyone folded`
     );
     recordPokerResult(res);
+    savePokerGame(res, humanNewStack);
   }
 
-  // ── processNextTurn ─────────────────────────────────────────────────────────
-  // Signature: (toAct[], players[], streetMaxBet, pot, phase, deck, community)
+  // ── processNextTurn ───────────────────────────────────────────────────────────
+
   processNextTurnRef.current = (
     currentToAct, currentPlayers, currentStreetMaxBet,
     currentPot, currentPhase, currentDeck, currentCommunity,
   ) => {
-    // If only one player remains, they win
     const active = currentPlayers.filter(p => !p.folded);
     if (active.length === 1) {
       endHandLastManStanding(active[0].id, currentPlayers, currentPot);
       return;
     }
-
-    // No one left to act → move to next street
     if (currentToAct.length === 0) {
-      advanceStreetRef.current(
-        currentPhase, currentDeck, currentCommunity, currentPlayers, currentPot,
-      );
+      advanceStreetRef.current(currentPhase, currentDeck, currentCommunity, currentPlayers, currentPot);
       return;
     }
-
     const actorId = currentToAct[0];
     setToAct(currentToAct);
 
     if (actorId === 0) {
-      // Human's turn — update UI hints and let the player press buttons
       const human     = currentPlayers.find(p => p.id === 0);
-      const sliderMin = currentStreetMaxBet > 0
-        ? currentStreetMaxBet + BIG_BLIND
-        : BIG_BLIND;
+      const sliderMin = currentStreetMaxBet > 0 ? currentStreetMaxBet + BIG_BLIND : BIG_BLIND;
       const sliderMax = (human?.stack ?? 0) + (human?.streetBet ?? 0);
       setBetValue(Math.max(Math.min(sliderMin, sliderMax), BIG_BLIND));
       const toCall = Math.max(0, currentStreetMaxBet - (human?.streetBet ?? 0));
-      setStatusMsg(toCall > 0 ? `Your turn — To call: ${toCall}` : 'Your turn');
+      setStatusMsg(toCall > 0 ? `Your turn — call ${toCall} or raise` : 'Your turn — check or bet');
       setAiThinking(false);
       setAiThinkingId(null);
     } else {
@@ -378,7 +427,8 @@ export default function PokerScreen({ onExitToWelcome }) {
     }
   };
 
-  // ── scheduleAiAction ────────────────────────────────────────────────────────
+  // ── scheduleAiAction ──────────────────────────────────────────────────────────
+
   scheduleAiActionRef.current = (
     actorId, currentToAct, currentPlayers, currentStreetMaxBet,
     currentPot, currentPhase, currentDeck, currentCommunity,
@@ -390,138 +440,106 @@ export default function PokerScreen({ onExitToWelcome }) {
       const actor    = currentPlayers.find(p => p.id === actorId);
       if (!actor) return;
       const aiToCall = Math.max(0, currentStreetMaxBet - actor.streetBet);
-      const decision = getPokerAiDecision(
-        actor.hand, currentCommunity, currentPot, aiToCall, actor.stack,
-      );
-
-      const nextToAct = currentToAct.slice(1); // remove current actor
+      const decision = getPokerAiDecision(actor.hand, currentCommunity, currentPot, aiToCall, actor.stack);
+      const nextToAct = currentToAct.slice(1);
 
       if (decision === 'fold') {
+        setLastAction(prev => ({ ...prev, [actorId]: 'Folded' }));
         const newPs = updatePlayer(currentPlayers, actorId, { folded: true });
         setPlayers(newPs);
-        setAiThinking(false);
-        setAiThinkingId(null);
-        processNextTurnRef.current(
-          nextToAct, newPs, currentStreetMaxBet,
-          currentPot, currentPhase, currentDeck, currentCommunity,
-        );
+        setAiThinking(false); setAiThinkingId(null);
+        processNextTurnRef.current(nextToAct, newPs, currentStreetMaxBet, currentPot, currentPhase, currentDeck, currentCommunity);
 
       } else if (decision === 'check' || (decision === 'call' && aiToCall === 0)) {
-        setAiThinking(false);
-        setAiThinkingId(null);
-        processNextTurnRef.current(
-          nextToAct, currentPlayers, currentStreetMaxBet,
-          currentPot, currentPhase, currentDeck, currentCommunity,
-        );
+        setLastAction(prev => ({ ...prev, [actorId]: 'Checked' }));
+        setAiThinking(false); setAiThinkingId(null);
+        processNextTurnRef.current(nextToAct, currentPlayers, currentStreetMaxBet, currentPot, currentPhase, currentDeck, currentCommunity);
 
       } else if (decision === 'call') {
         const callAmt = Math.min(aiToCall, actor.stack);
-        const newPot  = currentPot + callAmt;
-        const newPs   = updatePlayer(currentPlayers, actorId, {
-          stack:     actor.stack    - callAmt,
-          streetBet: actor.streetBet + callAmt,
+        setLastAction(prev => ({ ...prev, [actorId]: `Called ${callAmt}` }));
+        const newPot = currentPot + callAmt;
+        const newPs  = updatePlayer(currentPlayers, actorId, {
+          stack: actor.stack - callAmt, streetBet: actor.streetBet + callAmt,
         });
-        setPot(newPot);
-        setPlayers(newPs);
-        setAiThinking(false);
-        setAiThinkingId(null);
-        processNextTurnRef.current(
-          nextToAct, newPs, currentStreetMaxBet,
-          newPot, currentPhase, currentDeck, currentCommunity,
-        );
+        setPot(newPot); setPlayers(newPs);
+        setAiThinking(false); setAiThinkingId(null);
+        processNextTurnRef.current(nextToAct, newPs, currentStreetMaxBet, newPot, currentPhase, currentDeck, currentCommunity);
 
       } else {
-        // Raise: bring total commitment to max(streetMaxBet + BB, streetMaxBet * 2, 3×BB)
-        const raiseTarget   = Math.max(currentStreetMaxBet + BIG_BLIND, currentStreetMaxBet * 2, BIG_BLIND * 3);
-        const raisePays     = Math.min(raiseTarget - actor.streetBet, actor.stack);
-        const newStreetBet  = actor.streetBet + raisePays;
-        const newStreetMax  = Math.max(currentStreetMaxBet, newStreetBet);
-        const newPot        = currentPot + raisePays;
-        const newPs         = updatePlayer(currentPlayers, actorId, {
-          stack:     actor.stack     - raisePays,
-          streetBet: newStreetBet,
+        // Raise
+        const raiseTarget  = Math.max(currentStreetMaxBet + BIG_BLIND, currentStreetMaxBet * 2, BIG_BLIND * 3);
+        const raisePays    = Math.min(raiseTarget - actor.streetBet, actor.stack);
+        const newStreetBet = actor.streetBet + raisePays;
+        const newStreetMax = Math.max(currentStreetMaxBet, newStreetBet);
+        const newPot       = currentPot + raisePays;
+        const newPs        = updatePlayer(currentPlayers, actorId, {
+          stack: actor.stack - raisePays, streetBet: newStreetBet,
         });
-        // Rebuild toAct: everyone after raiser must respond
+        setLastAction(prev => ({ ...prev, [actorId]: `Raised → ${newStreetBet}` }));
         const newToAct = toActAfterRaise(actorId, newPs);
-        setPot(newPot);
-        setStreetMaxBet(newStreetMax);
-        setPlayers(newPs);
-        setAiThinking(false);
-        setAiThinkingId(null);
-        processNextTurnRef.current(
-          newToAct, newPs, newStreetMax,
-          newPot, currentPhase, currentDeck, currentCommunity,
-        );
+        setPot(newPot); setStreetMaxBet(newStreetMax); setPlayers(newPs);
+        setAiThinking(false); setAiThinkingId(null);
+        processNextTurnRef.current(newToAct, newPs, newStreetMax, newPot, currentPhase, currentDeck, currentCommunity);
       }
-    }, 350);
+    }, 380);
   };
 
-  // ── advanceStreet ───────────────────────────────────────────────────────────
-  advanceStreetRef.current = (
-    currentPhase, currentDeck, currentCommunity, currentPlayers, currentPot,
-  ) => {
-    let newDeck      = [...currentDeck];
-    let newCommunity = [...currentCommunity];
-    let nextPhase;
+  // ── advanceStreet ─────────────────────────────────────────────────────────────
+
+  advanceStreetRef.current = (currentPhase, currentDeck, currentCommunity, currentPlayers, currentPot) => {
+    let newDeck = [...currentDeck], newCommunity = [...currentCommunity], nextPhase;
 
     if (currentPhase === 'preflop') {
       const { hand, deck: d } = deal(newDeck, 3);
-      newCommunity = hand;                           newDeck = d; nextPhase = 'flop';
+      newCommunity = hand; newDeck = d; nextPhase = 'flop';
     } else if (currentPhase === 'flop') {
       const { hand, deck: d } = deal(newDeck, 1);
-      newCommunity = [...newCommunity, hand[0]];     newDeck = d; nextPhase = 'turn';
+      newCommunity = [...newCommunity, hand[0]]; newDeck = d; nextPhase = 'turn';
     } else if (currentPhase === 'turn') {
       const { hand, deck: d } = deal(newDeck, 1);
-      newCommunity = [...newCommunity, hand[0]];     newDeck = d; nextPhase = 'river';
+      newCommunity = [...newCommunity, hand[0]]; newDeck = d; nextPhase = 'river';
     } else {
-      // After river → showdown
       resolveShowdown(currentPlayers, newCommunity, currentPot);
       return;
     }
 
-    // Reset each player's streetBet for the new street
     const resetPlayers = currentPlayers.map(p => ({ ...p, streetBet: 0 }));
     const newToAct     = postFlopOrder(resetPlayers);
 
+    setLastAction({});
     setCommunity(newCommunity);
     setDeck(newDeck);
     setPhase(nextPhase);
     setStreetMaxBet(0);
     setToAct(newToAct);
     setPlayers(resetPlayers);
-    setStatusMsg(nextPhase.charAt(0).toUpperCase() + nextPhase.slice(1));
+    setStatusMsg(STREET_LABEL[nextPhase]);
     setAiThinking(false);
     setAiThinkingId(null);
     setBetValue(BIG_BLIND);
 
-    processNextTurnRef.current(
-      newToAct, resetPlayers, 0, currentPot, nextPhase, newDeck, newCommunity,
-    );
+    processNextTurnRef.current(newToAct, resetPlayers, 0, currentPot, nextPhase, newDeck, newCommunity);
   };
 
-  // ── startHand ───────────────────────────────────────────────────────────────
+  // ── startHand ─────────────────────────────────────────────────────────────────
 
   const startHand = () => {
-    let d  = shuffleDeck(makeNewDeck());
-
-    // Preserve stacks from previous hand; auto-rebuy any player at 0 chips.
+    let d = shuffleDeck(makeNewDeck());
     let ps = players.map(p => ({
       ...p,
       hand: [], streetBet: 0, folded: false, revealed: false, handName: '',
       stack: p.stack > 0 ? p.stack : STARTING_STACK,
     }));
 
-    // Record human's stack at hand start (used for session-net delta at end).
     handStartStackRef.current = ps.find(p => p.id === 0)?.stack ?? STARTING_STACK;
 
-    // Deal 2 hole cards to each player in seat order
     ps = ps.map(p => {
       const { hand, deck: d2 } = deal(d, 2);
       d = d2;
       return { ...p, hand };
     });
 
-    // Post blinds: player (id=0) = SB, AI id=1 = BB (from their current stacks)
     const sbStack = ps.find(p => p.id === 0)?.stack ?? STARTING_STACK;
     const bbStack = ps.find(p => p.id === 1)?.stack ?? STARTING_STACK;
     ps = updatePlayer(ps, 0, { stack: sbStack - SMALL_BLIND, streetBet: SMALL_BLIND });
@@ -541,22 +559,16 @@ export default function PokerScreen({ onExitToWelcome }) {
     setAiThinking(false);
     setAiThinkingId(null);
     setResult(null);
-    setStatusMsg('Pre-flop');
+    setStatusMsg('Pre-Flop');
     setBetValue(BIG_BLIND * 3);
+    setLastAction({});
 
-    // All values passed explicitly — state updates are batched but the ref
-    // function uses the parameters, not state reads.
-    processNextTurnRef.current(
-      initialToAct, ps, initialStreetMaxBet, initialPot, 'preflop', d, [],
-    );
+    processNextTurnRef.current(initialToAct, ps, initialStreetMaxBet, initialPot, 'preflop', d, []);
   };
 
-  // Keep ref current so the bust-detection effect always calls the latest version.
   startHandRef.current = startHand;
-
   useEffect(() => { startHand(); }, []);
 
-  // Auto-start a new hand when the human player busts (stack hits 0).
   useEffect(() => {
     const human = players.find(p => p.id === 0);
     if ((phase === 'done' || phase === 'showdown') && human?.stack === 0) {
@@ -565,42 +577,35 @@ export default function PokerScreen({ onExitToWelcome }) {
     }
   }, [phase, players]);
 
-  // ── humanAct ────────────────────────────────────────────────────────────────
-  // Reads state from the current render's closure (safe: only called on user press
-  // which always happens after the latest render).
+  // ── humanAct ─────────────────────────────────────────────────────────────────
 
   const humanAct = (decision, amount) => {
     const human = players.find(p => p.id === 0);
     if (!human) return;
 
     if (decision === 'fold') {
-      const newPs    = updatePlayer(players, 0, { folded: true });
-      const newToAct = toAct.slice(1);
+      setLastAction(prev => ({ ...prev, [0]: 'Folded' }));
+      const newPs = updatePlayer(players, 0, { folded: true });
       setPlayers(newPs);
-      processNextTurnRef.current(newToAct, newPs, streetMaxBet, pot, phase, deck, community);
+      processNextTurnRef.current(toAct.slice(1), newPs, streetMaxBet, pot, phase, deck, community);
       return;
     }
-
     if (decision === 'check') {
-      const newToAct = toAct.slice(1);
-      processNextTurnRef.current(newToAct, players, streetMaxBet, pot, phase, deck, community);
+      setLastAction(prev => ({ ...prev, [0]: 'Checked' }));
+      processNextTurnRef.current(toAct.slice(1), players, streetMaxBet, pot, phase, deck, community);
       return;
     }
-
     if (decision === 'call') {
-      const callAmt  = Math.min(streetMaxBet - human.streetBet, human.stack);
-      const newPot   = pot + callAmt;
-      const newPs    = updatePlayer(players, 0, {
-        stack:     human.stack     - callAmt,
-        streetBet: human.streetBet + callAmt,
+      const callAmt = Math.min(streetMaxBet - human.streetBet, human.stack);
+      setLastAction(prev => ({ ...prev, [0]: `Called ${callAmt}` }));
+      const newPot = pot + callAmt;
+      const newPs  = updatePlayer(players, 0, {
+        stack: human.stack - callAmt, streetBet: human.streetBet + callAmt,
       });
-      const newToAct = toAct.slice(1);
-      setPot(newPot);
-      setPlayers(newPs);
-      processNextTurnRef.current(newToAct, newPs, streetMaxBet, newPot, phase, deck, community);
+      setPot(newPot); setPlayers(newPs);
+      processNextTurnRef.current(toAct.slice(1), newPs, streetMaxBet, newPot, phase, deck, community);
       return;
     }
-
     if (decision === 'raise') {
       const raiseTo      = Math.max(amount, streetMaxBet + BIG_BLIND);
       const raiseAmt     = Math.min(raiseTo - human.streetBet, human.stack);
@@ -608,132 +613,130 @@ export default function PokerScreen({ onExitToWelcome }) {
       const newStreetMax = Math.max(streetMaxBet, newStreetBet);
       const newPot       = pot + raiseAmt;
       const newPs        = updatePlayer(players, 0, {
-        stack:     human.stack     - raiseAmt,
-        streetBet: newStreetBet,
+        stack: human.stack - raiseAmt, streetBet: newStreetBet,
       });
-      // Rebuild toAct: all active players after human must respond
+      setLastAction(prev => ({ ...prev, [0]: `Raised → ${newStreetBet}` }));
       const newToAct = toActAfterRaise(0, newPs);
-      setPot(newPot);
-      setStreetMaxBet(newStreetMax);
-      setPlayers(newPs);
+      setPot(newPot); setStreetMaxBet(newStreetMax); setPlayers(newPs);
       processNextTurnRef.current(newToAct, newPs, newStreetMax, newPot, phase, deck, community);
     }
   };
 
-  // ── Derived render values ───────────────────────────────────────────────────
+  // ── Derived values ────────────────────────────────────────────────────────────
 
   const human       = players.find(p => p.id === 0);
   const aiPlayers   = players.filter(p => !p.isHuman);
   const isHumanTurn = toAct.length > 0 && toAct[0] === 0 && !aiThinking;
   const isDone      = phase === 'done' || phase === 'showdown';
+  const toCall      = human ? Math.max(0, streetMaxBet - human.streetBet) : 0;
+  const sliderMin   = streetMaxBet > 0 ? streetMaxBet + BIG_BLIND : BIG_BLIND;
+  const sliderMax   = human ? Math.max(sliderMin + 1, human.stack + human.streetBet) : sliderMin + 1;
+  const clampedBet  = Math.max(sliderMin, Math.min(sliderMax, betValue));
+  const cfg         = result ? RESULT_CFG[result] : null;
 
-  const toCall     = human ? Math.max(0, streetMaxBet - human.streetBet) : 0;
-  const sliderMin  = streetMaxBet > 0 ? streetMaxBet + BIG_BLIND : BIG_BLIND;
-  const sliderMax  = human ? Math.max(sliderMin + 1, human.stack + human.streetBet) : sliderMin + 1;
-  const clampedBet = Math.max(sliderMin, Math.min(sliderMax, betValue));
-
-  // ── Shared betting panel content ─────────────────────────────────────────────
-
-  const bettingButtons = (btnStyle, textStyle) => (
-    <>
-      <Pressable style={[btnStyle, wStyles.btnDanger]} onPress={() => humanAct('fold')}>
-        <Text style={textStyle}>Fold</Text>
-      </Pressable>
-      {toCall === 0
-        ? <Pressable style={btnStyle} onPress={() => humanAct('check')}><Text style={textStyle}>Check</Text></Pressable>
-        : <Pressable style={btnStyle} onPress={() => humanAct('call')}><Text style={textStyle}>Call {toCall}</Text></Pressable>}
-      <Pressable style={[btnStyle, wStyles.btnGold]} onPress={() => humanAct('raise', clampedBet)}>
-        <Text style={textStyle}>{streetMaxBet > 0 ? `Raise → ${clampedBet}` : `Bet → ${clampedBet}`}</Text>
-      </Pressable>
-    </>
-  );
-
-  // ── Web layout — fixed height, no scroll ─────────────────────────────────────
+  // ── Web layout ────────────────────────────────────────────────────────────────
 
   if (Platform.OS === 'web') {
     return (
-      <View style={wStyles.root}>
+      <View style={w.root}>
 
-        {/* Compact header row: title | status | pot */}
-        <View style={wStyles.header}>
-          <Text style={wStyles.title}>Texas Hold'em</Text>
-          <Text style={wStyles.phase} numberOfLines={1}>{statusMsg}</Text>
-          <Text style={wStyles.pot}>Pot: {pot}</Text>
+        {/* Header */}
+        <View style={w.header}>
+          <Text style={w.title}>♣ Texas Hold'em ♠</Text>
+          <View style={w.streetPill}>
+            <Text style={w.streetText}>{STREET_LABEL[phase] ?? phase}</Text>
+          </View>
+          <Text style={w.pot}>Pot: {pot}</Text>
         </View>
 
-        {/* AI grid — expands to fill leftover vertical space */}
-        <View style={wStyles.aiSection}>
-          <View style={pStyles.aiGrid}>
+        {/* AI grid */}
+        <View style={w.aiSection}>
+          <View style={w.aiGrid}>
             {aiPlayers.map(p => (
-              <AiSeat key={p.id} player={p} isActive={aiThinkingId === p.id} compact />
+              <AiSeat key={p.id} player={p} isActive={aiThinkingId === p.id} lastAction={lastAction[p.id]} compact />
             ))}
           </View>
         </View>
 
-        <View style={wStyles.divider} />
+        <View style={w.divider} />
 
-        {/* Community cards */}
-        <View style={wStyles.cardSection}>
-          <Text style={wStyles.label}>Community</Text>
-          <View style={wStyles.cardRow}>
+        {/* Community */}
+        <View style={w.feltRow}>
+          <Text style={w.feltLabel}>Community</Text>
+          <View style={w.cardRow}>
             {community.length === 0
-              ? <Text style={pStyles.empty}>—</Text>
+              ? <Text style={w.empty}>—</Text>
               : community.map((c, i) => (
-                  <Image key={`com-${i}`} source={cardImages[c]} style={wStyles.cardImg} />
+                  <Image key={`com-${i}`} source={cardImages[c]} style={w.cardImg} />
                 ))}
           </View>
         </View>
 
-        <View style={wStyles.divider} />
+        <View style={w.divider} />
 
-        {/* Player hand */}
-        <View style={wStyles.cardSection}>
-          <Text style={wStyles.label}>
+        {/* Player */}
+        <View style={w.feltRow}>
+          <Text style={w.feltLabel}>
             Your Hand{human?.handName ? ` — ${human.handName}` : ''}
           </Text>
-          <View style={wStyles.cardRow}>
+          <View style={w.cardRow}>
             {human?.hand.map((c, i) => (
-              <Image key={`p-${i}`} source={cardImages[c]} style={wStyles.cardImg} />
+              <Image key={`p-${i}`} source={cardImages[c]} style={w.cardImg} />
             ))}
           </View>
-          <Text style={wStyles.stackInfo}>
-            Stack: {human?.stack ?? 0}{'  |  '}
-            <Text style={{ color: sessionNet >= 0 ? '#4cff80' : '#ff5555' }}>
-              Session: {sessionNet >= 0 ? '+' : ''}{sessionNet}
+          <Text style={w.stackRow}>
+            Stack: <Text style={w.stackNum}>{human?.stack ?? 0}</Text>
+            {'   '}
+            Session: <Text style={{ color: sessionNet >= 0 ? '#4cff80' : '#ff5555' }}>
+              {sessionNet >= 0 ? '+' : ''}{sessionNet}
             </Text>
           </Text>
         </View>
 
         {/* Result */}
-        {result
-          ? <Text style={[wStyles.result, { color: RESULT_COLOR[result] }]}>{statusMsg}</Text>
-          : null}
+        {cfg && (
+          <View style={[w.resultBanner, { backgroundColor: cfg.bg, borderColor: cfg.border }]}>
+            <Text style={[w.resultText, { color: cfg.color }]}>{statusMsg}</Text>
+          </View>
+        )}
 
         {/* Betting panel */}
         {isHumanTurn && !isDone && (
-          <View style={wStyles.bettingPanel}>
-            {toCall > 0 ? <Text style={wStyles.callInfo}>To call: {toCall}</Text> : null}
-            <Text style={wStyles.sliderLabel}>
-              {streetMaxBet > 0 ? 'Raise to:' : 'Bet:'} {clampedBet}
-            </Text>
+          <View style={w.betPanel}>
+            {toCall > 0
+              ? <Text style={w.callInfo}>To call: <Text style={w.callNum}>{toCall}</Text></Text>
+              : null}
+            <Text style={w.sliderLabel}>{streetMaxBet > 0 ? 'Raise to:' : 'Bet:'} {clampedBet}</Text>
             <BetSlider min={sliderMin} max={sliderMax} value={clampedBet} onValueChange={v => setBetValue(v)} />
-            <View style={wStyles.bounds}>
-              <Text style={wStyles.boundText}>Min: {sliderMin}</Text>
-              <Text style={wStyles.boundText}>Max: {sliderMax}</Text>
+            <View style={w.bounds}>
+              <Text style={w.boundText}>Min {sliderMin}</Text>
+              <Text style={w.boundText}>Max {sliderMax}</Text>
             </View>
-            <View style={wStyles.btnRow}>
-              {bettingButtons(wStyles.btn, wStyles.btnText)}
+            <View style={w.btnRow}>
+              <Pressable style={[w.btn, w.btnRed]}   onPress={() => humanAct('fold')}>
+                <Text style={w.btnText}>Fold</Text>
+              </Pressable>
+              {toCall === 0
+                ? <Pressable style={w.btn} onPress={() => humanAct('check')}>
+                    <Text style={w.btnText}>Check</Text>
+                  </Pressable>
+                : <Pressable style={w.btn} onPress={() => humanAct('call')}>
+                    <Text style={w.btnText}>Call {toCall}</Text>
+                  </Pressable>}
+              <Pressable style={[w.btn, w.btnGold]} onPress={() => humanAct('raise', clampedBet)}>
+                <Text style={w.btnText}>{streetMaxBet > 0 ? `Raise → ${clampedBet}` : `Bet → ${clampedBet}`}</Text>
+              </Pressable>
             </View>
           </View>
         )}
 
-        {/* Nav buttons */}
-        <View style={wStyles.navRow}>
-          <Pressable style={wStyles.btn} onPress={startHand}>
-            <Text style={wStyles.btnText}>New Hand</Text>
+        {/* Nav */}
+        <View style={w.navRow}>
+          <Pressable style={w.navBtn} onPress={startHand}>
+            <Text style={w.navText}>New Hand</Text>
           </Pressable>
-          <Pressable style={wStyles.btn} onPress={() => onExitToWelcome?.()}>
-            <Text style={wStyles.btnText}>← Menu</Text>
+          <Pressable style={w.navBtn} onPress={() => onExitToWelcome?.()}>
+            <Text style={w.navText}>← Menu</Text>
           </Pressable>
         </View>
 
@@ -741,169 +744,291 @@ export default function PokerScreen({ onExitToWelcome }) {
     );
   }
 
-  // ── Mobile layout — scrollable ────────────────────────────────────────────────
+  // ── Mobile layout ─────────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={gameStyles.container}>
-      <ScrollView
-        contentContainerStyle={gameStyles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={gameStyles.title}>Texas Hold'em</Text>
-        <Text style={gameStyles.phaseText}>{statusMsg}</Text>
+      <ScrollView contentContainerStyle={m.scroll} showsVerticalScrollIndicator={false}>
 
-        <Text style={pStyles.potText}>Pot: {pot}</Text>
-
-        <View style={pStyles.aiGrid}>
-          {aiPlayers.map(p => (
-            <AiSeat key={p.id} player={p} isActive={aiThinkingId === p.id} />
-          ))}
-        </View>
-
-        <View style={gameStyles.divider} />
-
-        <Text style={gameStyles.sectionLabel}>Community</Text>
-        <View style={gameStyles.handRow}>
-          {community.length === 0
-            ? <Text style={pStyles.empty}>—</Text>
-            : community.map((c, i) => (
-                <Image key={`com-${i}`} source={cardImages[c]} style={gameStyles.cardImage} />
-              ))}
-        </View>
-
-        <View style={gameStyles.divider} />
-
-        <Text style={gameStyles.sectionLabel}>
-          Your Hand{human?.handName ? ` — ${human.handName}` : ''}
-        </Text>
-        <View style={gameStyles.handRow}>
-          {human?.hand.map((c, i) => (
-            <Image key={`p-${i}`} source={cardImages[c]} style={gameStyles.cardImage} />
-          ))}
-        </View>
-        <Text style={pStyles.stackInfo}>
-          Stack: {human?.stack ?? 0}{'  |  '}
-          <Text style={{ color: sessionNet >= 0 ? '#4cff80' : '#ff5555' }}>
-            Session: {sessionNet >= 0 ? '+' : ''}{sessionNet}
-          </Text>
-        </Text>
-
-        {result
-          ? <Text style={[gameStyles.message, { color: RESULT_COLOR[result] }]}>{statusMsg}</Text>
-          : null}
-
-        {isHumanTurn && !isDone && (
-          <View style={pStyles.bettingPanel}>
-            {toCall > 0 ? <Text style={pStyles.callInfo}>To call: {toCall}</Text> : null}
-            <Text style={pStyles.sliderLabel}>
-              {streetMaxBet > 0 ? 'Raise to:' : 'Bet:'} {clampedBet}
-            </Text>
-            <BetSlider min={sliderMin} max={sliderMax} value={clampedBet} onValueChange={v => setBetValue(v)} />
-            <View style={pStyles.bounds}>
-              <Text style={pStyles.boundText}>Min: {sliderMin}</Text>
-              <Text style={pStyles.boundText}>Max: {sliderMax}</Text>
+        {/* Header */}
+        <View style={m.header}>
+          <Text style={m.title}>Texas Hold'em</Text>
+          <View style={m.headerRight}>
+            <View style={m.streetPill}>
+              <Text style={m.streetText}>{STREET_LABEL[phase] ?? phase}</Text>
             </View>
-            <View style={gameStyles.buttonRow}>
-              {bettingButtons(gameStyles.button, gameStyles.buttonText)}
+            <Text style={m.pot}>Pot: {pot}</Text>
+          </View>
+        </View>
+
+        {/* AI grid */}
+        <View style={m.aiGrid}>
+          {aiPlayers.map(p => (
+            <AiSeat key={p.id} player={p} isActive={aiThinkingId === p.id} lastAction={lastAction[p.id]} />
+          ))}
+        </View>
+
+        {/* Community cards */}
+        <View style={m.feltPanel}>
+          <Text style={m.feltLabel}>Community</Text>
+          <View style={m.cardRow}>
+            {community.length === 0
+              ? <Text style={m.empty}>— Waiting for cards —</Text>
+              : community.map((c, i) => (
+                  <Image key={`com-${i}`} source={cardImages[c]} style={m.communityCard} />
+                ))}
+          </View>
+        </View>
+
+        {/* Result banner */}
+        {cfg && (
+          <View style={[m.resultBanner, { backgroundColor: cfg.bg, borderColor: cfg.border }]}>
+            <Text style={[m.resultText, { color: cfg.color }]}>{statusMsg}</Text>
+          </View>
+        )}
+
+        {/* Player panel */}
+        <View style={[m.feltPanel, isHumanTurn && m.feltPanelActive]}>
+          <View style={m.playerHeader}>
+            <View>
+              <Text style={m.feltLabel}>Your Hand{human?.handName ? ` — ${human.handName}` : ''}</Text>
+              <Text style={m.stackInfo}>
+                Stack: <Text style={m.stackNum}>{human?.stack ?? 0}</Text>
+                {'   '}
+                <Text style={{ color: sessionNet >= 0 ? '#4cff80' : '#ff5555' }}>
+                  {sessionNet >= 0 ? '+' : ''}{sessionNet}
+                </Text>
+              </Text>
+            </View>
+            {human?.streetBet > 0 && (
+              <Text style={m.playerBetBadge}>Bet: {human.streetBet}</Text>
+            )}
+          </View>
+          <View style={m.cardRow}>
+            {human?.hand.map((c, i) => (
+              <Image key={`p-${i}`} source={cardImages[c]} style={m.playerCard} />
+            ))}
+          </View>
+        </View>
+
+        {/* Betting panel */}
+        {isHumanTurn && !isDone && (
+          <View style={m.betPanel}>
+            {toCall > 0
+              ? <Text style={m.callInfo}>To call: <Text style={m.callNum}>{toCall}</Text></Text>
+              : <Text style={m.callInfo}>No bet to call — check or bet</Text>}
+
+            <Text style={m.sliderLabel}>{streetMaxBet > 0 ? 'Raise to:' : 'Bet:'} {clampedBet}</Text>
+            <BetSlider min={sliderMin} max={sliderMax} value={clampedBet} onValueChange={v => setBetValue(v)} />
+            <View style={m.bounds}>
+              <Text style={m.boundText}>Min {sliderMin}</Text>
+              <Text style={m.boundText}>Max {sliderMax}</Text>
+            </View>
+
+            <View style={m.actionRow}>
+              <Pressable style={[m.actionBtn, m.btnRed]} onPress={() => humanAct('fold')}>
+                <Text style={m.actionBtnText}>Fold</Text>
+              </Pressable>
+              {toCall === 0
+                ? <Pressable style={m.actionBtn} onPress={() => humanAct('check')}>
+                    <Text style={m.actionBtnText}>Check</Text>
+                  </Pressable>
+                : <Pressable style={m.actionBtn} onPress={() => humanAct('call')}>
+                    <Text style={m.actionBtnText}>Call {toCall}</Text>
+                  </Pressable>}
+              <Pressable style={[m.actionBtn, m.btnGold]} onPress={() => humanAct('raise', clampedBet)}>
+                <Text style={m.actionBtnText}>{streetMaxBet > 0 ? `Raise` : `Bet`}{'\n'}{clampedBet}</Text>
+              </Pressable>
             </View>
           </View>
         )}
 
-        <View style={gameStyles.divider} />
+        {/* Nav */}
+        <View style={m.navRow}>
+          <Pressable style={m.navBtn} onPress={startHand}>
+            <Text style={m.navText}>New Hand</Text>
+          </Pressable>
+          <Pressable style={m.navBtn} onPress={() => onExitToWelcome?.()}>
+            <Text style={m.navText}>← Menu</Text>
+          </Pressable>
+        </View>
 
-        <Pressable style={gameStyles.button} onPress={startHand}>
-          <Text style={gameStyles.buttonText}>New Hand</Text>
-        </Pressable>
-        <Pressable style={[gameStyles.button, { marginTop: 6 }]} onPress={() => onExitToWelcome?.()}>
-          <Text style={gameStyles.buttonText}>← Menu</Text>
-        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-// ── Web-specific styles (no-scroll fixed layout) ──────────────────────────────
+// ── Web styles ────────────────────────────────────────────────────────────────
 
-const wStyles = StyleSheet.create({
+const w = StyleSheet.create({
   root: {
     flex: 1, backgroundColor: Colors.bg,
-    paddingHorizontal: 10, paddingTop: 6, paddingBottom: 6,
+    paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8,
   },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingBottom: 6, marginBottom: 4,
+    paddingBottom: 7, marginBottom: 5,
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
-  title:  { color: Colors.gold,    fontSize: 15, fontWeight: '800', letterSpacing: 1 },
-  phase:  { color: Colors.goldDim, fontSize: 10, fontWeight: '700', textTransform: 'uppercase',
-            letterSpacing: 1, flex: 1, textAlign: 'center', paddingHorizontal: 4 },
-  pot:    { color: Colors.gold,    fontSize: 15, fontWeight: '800' },
-  aiSection:   { flex: 1, justifyContent: 'center' },
-  divider:     { height: 1, backgroundColor: Colors.border, opacity: 0.6, marginVertical: 4 },
-  cardSection: { alignItems: 'center', paddingVertical: 3 },
-  label:       { color: Colors.goldDim, fontSize: 10, fontWeight: '700',
-                 textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 3 },
-  cardRow:     { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap' },
+  title:  { color: Colors.gold, fontSize: 14, fontWeight: '900', letterSpacing: 1 },
+  streetPill: {
+    backgroundColor: Colors.bgCard, borderRadius: 12,
+    paddingHorizontal: 10, paddingVertical: 3,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  streetText: { color: Colors.goldDim, fontSize: 9, fontWeight: '800', letterSpacing: 2, textTransform: 'uppercase' },
+  pot:    { color: Colors.gold, fontSize: 14, fontWeight: '900' },
+
+  aiSection: { flex: 1, justifyContent: 'center' },
+  aiGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', width: '100%' },
+
+  divider: { height: 1, backgroundColor: Colors.border, opacity: 0.6, marginVertical: 5 },
+  feltRow: { alignItems: 'center', paddingVertical: 4 },
+  feltLabel: { color: Colors.goldDim, fontSize: 9, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 4 },
+  cardRow: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: 4 },
   cardImg: {
-    width: 48, height: 70, resizeMode: 'contain', margin: 3,
+    width: 46, height: 68, resizeMode: 'contain',
     backgroundColor: Colors.white, borderRadius: 5, borderWidth: 1, borderColor: '#ccc',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4, shadowRadius: 3, elevation: 3,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 3, elevation: 3,
   },
-  stackInfo: { color: Colors.textMuted, fontSize: 11, fontWeight: '700', marginTop: 3 },
-  result:    { fontSize: 15, fontWeight: '800', textAlign: 'center', marginVertical: 3, letterSpacing: 0.5 },
-  bettingPanel: {
+  empty: { color: Colors.textFaint, fontSize: 18 },
+
+  stackRow: { color: Colors.textMuted, fontSize: 11, fontWeight: '700', marginTop: 4 },
+  stackNum: { color: Colors.white, fontWeight: '900' },
+
+  resultBanner: {
+    paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+    marginVertical: 4, borderWidth: 1.5,
+  },
+  resultText: { fontSize: 14, fontWeight: '900', letterSpacing: 2 },
+
+  betPanel: {
     backgroundColor: Colors.bgCard, borderRadius: 10,
-    padding: 8, marginVertical: 4, borderWidth: 1, borderColor: Colors.border,
+    padding: 10, marginVertical: 5, borderWidth: 1, borderColor: Colors.border,
   },
-  callInfo:    { color: Colors.textMuted, fontSize: 12, fontWeight: '700', textAlign: 'center', marginBottom: 2 },
-  sliderLabel: { color: Colors.gold,      fontSize: 13, fontWeight: '800', textAlign: 'center', marginBottom: 2 },
-  bounds:      { flexDirection: 'row', justifyContent: 'space-between', marginTop: 1, marginBottom: 2 },
-  boundText:   { color: Colors.textMuted, fontSize: 10, fontWeight: '600' },
-  btnRow:  { flexDirection: 'row', gap: 6, marginTop: 4 },
-  navRow:  { flexDirection: 'row', gap: 8, marginTop: 5 },
+  callInfo:    { color: Colors.textMuted, fontSize: 11, fontWeight: '700', textAlign: 'center', marginBottom: 2 },
+  callNum:     { color: Colors.gold, fontWeight: '900' },
+  sliderLabel: { color: Colors.gold, fontSize: 12, fontWeight: '900', textAlign: 'center', marginBottom: 2 },
+  bounds:      { flexDirection: 'row', justifyContent: 'space-between', marginTop: 1, marginBottom: 3 },
+  boundText:   { color: Colors.textFaint, fontSize: 10 },
+
+  btnRow: { flexDirection: 'row', gap: 6 },
   btn: {
     flex: 1, backgroundColor: Colors.green, paddingVertical: 9,
     borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: Colors.greenLight,
   },
-  btnDanger: { backgroundColor: Colors.red,    borderColor: Colors.redLight },
-  btnGold:   { backgroundColor: '#7a5c00',     borderColor: Colors.goldDim  },
-  btnText:   { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+  btnRed:  { backgroundColor: Colors.red,      borderColor: Colors.redLight },
+  btnGold: { backgroundColor: Colors.goldDeep, borderColor: Colors.goldDim },
+  btnText: { color: Colors.white, fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
+
+  navRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  navBtn: {
+    flex: 1, backgroundColor: Colors.bgCard, paddingVertical: 9,
+    borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: Colors.border,
+  },
+  navText: { color: Colors.textMuted, fontSize: 11, fontWeight: '700' },
 });
 
-// ── Mobile supplemental styles ────────────────────────────────────────────────
+// ── Mobile styles ──────────────────────────────────────────────────────────────
 
-const pStyles = StyleSheet.create({
-  potText: {
-    color: Colors.gold, fontSize: 22, fontWeight: '800',
-    letterSpacing: 0.5, marginBottom: 10,
+const m = StyleSheet.create({
+  scroll: {
+    alignItems: 'center', paddingVertical: 16, paddingHorizontal: 14, width: '100%',
   },
-  aiGrid: {
-    flexDirection: 'row', flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    width: '100%', marginBottom: 6,
+
+  header: {
+    width: '100%', flexDirection: 'row',
+    justifyContent: 'space-between', alignItems: 'center', marginBottom: 12,
   },
-  empty: { color: Colors.textMuted, fontSize: 24, marginVertical: 20 },
-  stackInfo: {
-    color: Colors.textMuted, fontSize: 13, fontWeight: '700',
-    marginTop: 4, marginBottom: 4,
-  },
-  bettingPanel: {
-    width: '100%', backgroundColor: Colors.bgCard,
-    borderRadius: 12, padding: 14, marginTop: 10,
+  title:       { color: Colors.gold, fontSize: 22, fontWeight: '900', letterSpacing: 2 },
+  headerRight: { alignItems: 'flex-end', gap: 4 },
+  streetPill: {
+    backgroundColor: Colors.bgCard, borderRadius: 10,
+    paddingHorizontal: 10, paddingVertical: 3,
     borderWidth: 1, borderColor: Colors.border,
   },
-  callInfo: {
-    color: Colors.textMuted, fontSize: 13, fontWeight: '700',
-    marginBottom: 4, textAlign: 'center',
+  streetText: { color: Colors.goldDim, fontSize: 9, fontWeight: '800', letterSpacing: 2, textTransform: 'uppercase' },
+  pot: { color: Colors.gold, fontSize: 18, fontWeight: '900' },
+
+  aiGrid: {
+    width: '100%', flexDirection: 'row', flexWrap: 'wrap',
+    justifyContent: 'space-between', marginBottom: 8,
   },
-  sliderLabel: {
-    color: Colors.gold, fontSize: 16, fontWeight: '800',
-    textAlign: 'center', marginBottom: 4,
+
+  feltPanel: {
+    width: '100%', backgroundColor: Colors.felt,
+    borderRadius: 16, padding: 14, marginVertical: 5,
+    borderWidth: 1, borderColor: Colors.border,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4, shadowRadius: 8, elevation: 6,
   },
-  bounds: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    marginTop: 2, marginBottom: 4,
+  feltPanelActive: {
+    borderColor: Colors.gold,
+    shadowColor: Colors.gold, shadowOpacity: 0.3, shadowRadius: 14, elevation: 10,
   },
-  boundText: { color: Colors.textMuted, fontSize: 11, fontWeight: '600' },
+
+  feltLabel: {
+    color: Colors.goldDim, fontSize: 10, fontWeight: '800',
+    letterSpacing: 2.5, textTransform: 'uppercase', marginBottom: 8,
+  },
+
+  cardRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6 },
+  communityCard: {
+    width: 52, height: 76, resizeMode: 'contain',
+    backgroundColor: Colors.white, borderRadius: 7, borderWidth: 1, borderColor: '#ccc',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 6, elevation: 8,
+  },
+  playerCard: {
+    width: 62, height: 92, resizeMode: 'contain',
+    backgroundColor: Colors.white, borderRadius: 9, borderWidth: 1, borderColor: '#ccc',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.6, shadowRadius: 8, elevation: 10,
+  },
+  empty: { color: Colors.textFaint, fontSize: 14, paddingVertical: 6, textAlign: 'center' },
+
+  playerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  stackInfo:    { color: Colors.textMuted, fontSize: 13, fontWeight: '700', marginTop: 4 },
+  stackNum:     { color: Colors.white, fontWeight: '900' },
+  playerBetBadge: {
+    color: Colors.gold, fontSize: 13, fontWeight: '800',
+    backgroundColor: Colors.goldDeep, borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 4,
+  },
+
+  resultBanner: {
+    width: '100%', paddingVertical: 18, borderRadius: 14,
+    alignItems: 'center', marginVertical: 6, borderWidth: 1.5,
+  },
+  resultText: { fontSize: 24, fontWeight: '900', letterSpacing: 3, textTransform: 'uppercase' },
+
+  betPanel: {
+    width: '100%', backgroundColor: Colors.bgCard,
+    borderRadius: 16, padding: 16, marginVertical: 6,
+    borderWidth: 1, borderColor: Colors.border,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4, shadowRadius: 8, elevation: 6,
+  },
+  callInfo:    { color: Colors.textMuted, fontSize: 14, fontWeight: '700', textAlign: 'center', marginBottom: 4 },
+  callNum:     { color: Colors.gold, fontWeight: '900', fontSize: 16 },
+  sliderLabel: { color: Colors.gold, fontSize: 18, fontWeight: '900', textAlign: 'center', marginBottom: 6 },
+  bounds:      { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2, marginBottom: 6 },
+  boundText:   { color: Colors.textFaint, fontSize: 11 },
+
+  actionRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  actionBtn: {
+    flex: 1, backgroundColor: Colors.green,
+    paddingVertical: 14, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: Colors.greenLight,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 5, elevation: 5,
+  },
+  btnRed:       { backgroundColor: Colors.red,      borderColor: Colors.redLight },
+  btnGold:      { backgroundColor: Colors.goldDeep, borderColor: Colors.goldDim },
+  actionBtnText: { color: Colors.white, fontSize: 14, fontWeight: '900', textAlign: 'center', letterSpacing: 0.3 },
+
+  navRow: { flexDirection: 'row', width: '100%', gap: 10, marginTop: 10 },
+  navBtn: {
+    flex: 1, backgroundColor: Colors.bgCard, paddingVertical: 13,
+    borderRadius: 11, alignItems: 'center', borderWidth: 1, borderColor: Colors.border,
+  },
+  navText: { color: Colors.textMuted, fontSize: 14, fontWeight: '700' },
 });
