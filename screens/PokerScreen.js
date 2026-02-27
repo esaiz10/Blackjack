@@ -91,9 +91,15 @@ async function recordPokerResult(result) {
   }
 }
 
+const VALID_RESULTS = new Set(['win', 'loss', 'tie']);
+
 async function savePokerGame(result, humanStack) {
   const user = auth.currentUser;
   if (!user) return;
+  if (!VALID_RESULTS.has(result) || typeof humanStack !== 'number' || humanStack < 0) {
+    console.warn('savePokerGame: skipping save — invalid data', { result, humanStack });
+    return;
+  }
   try {
     await addDoc(collection(db, 'games'), {
       userId:      user.uid,
