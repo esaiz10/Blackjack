@@ -15,6 +15,7 @@ export const gameStyles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 30,
     paddingHorizontal: 20,
+    width: "100%",
   },
 
   // ── Typography ────────────────────────────────────────────────────────────

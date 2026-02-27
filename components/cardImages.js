@@ -12,9 +12,9 @@ export const cardImages = {
   "8S": require("./cards/8_of_spades.png"),
   "9S": require("./cards/9_of_spades.png"),
   "10S": require("./cards/10_of_spades.png"),
-  "JS": require("./cards/jack_of_spades.png"),
-  "QS": require("./cards/queen_of_spades.png"),
-  "KS": require("./cards/king_of_spades.png"),
+  "JS": require("./cards/jack_of_spades2.png"),
+  "QS": require("./cards/queen_of_spades2.png"),
+  "KS": require("./cards/king_of_spades2.png"),
 
   // Hearts
   "AH": require("./cards/ace_of_hearts.png"),
@@ -27,9 +27,9 @@ export const cardImages = {
   "8H": require("./cards/8_of_hearts.png"),
   "9H": require("./cards/9_of_hearts.png"),
   "10H": require("./cards/10_of_hearts.png"),
-  "JH": require("./cards/jack_of_hearts.png"),
-  "QH": require("./cards/queen_of_hearts.png"),
-  "KH": require("./cards/king_of_hearts.png"),
+  "JH": require("./cards/jack_of_hearts2.png"),
+  "QH": require("./cards/queen_of_hearts2.png"),
+  "KH": require("./cards/king_of_hearts2.png"),
 
   // Diamonds
   "AD": require("./cards/ace_of_diamonds.png"),
@@ -42,9 +42,9 @@ export const cardImages = {
   "8D": require("./cards/8_of_diamonds.png"),
   "9D": require("./cards/9_of_diamonds.png"),
   "10D": require("./cards/10_of_diamonds.png"),
-  "JD": require("./cards/jack_of_diamonds.png"),
-  "QD": require("./cards/queen_of_diamonds.png"),
-  "KD": require("./cards/king_of_diamonds.png"),
+  "JD": require("./cards/jack_of_diamonds2.png"),
+  "QD": require("./cards/queen_of_diamonds2.png"),
+  "KD": require("./cards/king_of_diamonds2.png"),
 
   // Clubs
   "AC": require("./cards/ace_of_clubs.png"),
@@ -57,9 +57,9 @@ export const cardImages = {
   "8C": require("./cards/8_of_clubs.png"),
   "9C": require("./cards/9_of_clubs.png"),
   "10C": require("./cards/10_of_clubs.png"),
-  "JC": require("./cards/jack_of_clubs.png"),
-  "QC": require("./cards/queen_of_clubs.png"),
-  "KC": require("./cards/king_of_clubs.png"),
+  "JC": require("./cards/jack_of_clubs2.png"),
+  "QC": require("./cards/queen_of_clubs2.png"),
+  "KC": require("./cards/king_of_clubs2.png"),
 
 };
   

@@ -1,68 +1,64 @@
 import React, { useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  Pressable,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
+  View, Text, Pressable, StyleSheet,
+  ActivityIndicator, Alert, ScrollView,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { auth } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
 
-const STATS_KEY = "blackjack_stats_v1";
+const BJ_KEY    = "blackjack_stats_v1";
+const POKER_KEY = "poker_stats_v1";
 
-async function fetchStats() {
-  const raw = await AsyncStorage.getItem(STATS_KEY);
-  if (!raw) return { wins: 0, losses: 0 };
-  const data = JSON.parse(raw);
-  return { wins: data.wins ?? 0, losses: data.losses ?? 0 };
+async function loadAll() {
+  const [bjRaw, pkRaw] = await Promise.all([
+    AsyncStorage.getItem(BJ_KEY),
+    AsyncStorage.getItem(POKER_KEY),
+  ]);
+  const bj = bjRaw ? JSON.parse(bjRaw) : {};
+  const pk = pkRaw ? JSON.parse(pkRaw) : {};
+  return {
+    bj: { wins: bj.wins ?? 0, losses: bj.losses ?? 0 },
+    pk: { wins: pk.wins ?? 0, losses: pk.losses ?? 0, ties: pk.ties ?? 0 },
+  };
 }
 
-async function clearStats() {
-  await AsyncStorage.setItem(STATS_KEY, JSON.stringify({ wins: 0, losses: 0 }));
+async function clearAll() {
+  await Promise.all([
+    AsyncStorage.setItem(BJ_KEY,    JSON.stringify({ wins: 0, losses: 0 })),
+    AsyncStorage.setItem(POKER_KEY, JSON.stringify({ wins: 0, losses: 0, ties: 0 })),
+  ]);
 }
 
 export default function StatsScreen({ onBack }) {
-  const [wins, setWins] = useState(0);
-  const [losses, setLosses] = useState(0);
+  const [bj,      setBj]      = useState({ wins: 0, losses: 0 });
+  const [pk,      setPk]      = useState({ wins: 0, losses: 0, ties: 0 });
   const [loading, setLoading] = useState(true);
-
-  const total = wins + losses;
-  const winRate = total === 0 ? 0 : Math.round((wins / total) * 100);
-  const lossRate = total === 0 ? 0 : 100 - winRate;
 
   const load = async () => {
     setLoading(true);
     try {
-      const s = await fetchStats();
-      setWins(s.wins);
-      setLosses(s.losses);
+      const { bj: b, pk: p } = await loadAll();
+      setBj(b);
+      setPk(p);
     } catch (e) {
-      console.error("fetchStats failed:", e);
+      console.error("loadAll failed:", e);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   const handleReset = () => {
     Alert.alert(
       "Reset Stats",
-      "Are you sure you want to reset all your stats?",
+      "Reset all Blackjack and Poker stats?",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Reset",
-          style: "destructive",
-          onPress: async () => {
-            await clearStats();
-            await load();
-          },
+          text: "Reset", style: "destructive",
+          onPress: async () => { await clearAll(); await load(); },
         },
       ]
     );
@@ -73,54 +69,104 @@ export default function StatsScreen({ onBack }) {
     auth.currentUser?.email?.split("@")[0] ||
     "Player";
 
+  const bjTotal   = bj.wins + bj.losses;
+  const bjWinRate = bjTotal === 0 ? 0 : Math.round((bj.wins / bjTotal) * 100);
+
+  const pkTotal   = pk.wins + pk.losses + pk.ties;
+  const pkWinRate = pkTotal === 0 ? 0 : Math.round((pk.wins / pkTotal) * 100);
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Stats</Text>
-      <Text style={styles.subtitle}>{displayName}</Text>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={styles.title}>Stats</Text>
+        <Text style={styles.subtitle}>{displayName}</Text>
 
-      <View style={styles.divider} />
+        <View style={styles.divider} />
 
-      {loading ? (
-        <ActivityIndicator size="large" color={Colors.gold} style={{ marginTop: 40 }} />
-      ) : (
-        <>
-          {/* Win / Loss tiles */}
-          <View style={styles.tileRow}>
-            <View style={[styles.tile, styles.tileWin]}>
-              <Text style={styles.tileNumber}>{wins}</Text>
-              <Text style={styles.tileLabel}>Wins</Text>
-            </View>
-            <View style={[styles.tile, styles.tileLoss]}>
-              <Text style={styles.tileNumber}>{losses}</Text>
-              <Text style={styles.tileLabel}>Losses</Text>
-            </View>
+        {loading ? (
+          <ActivityIndicator size="large" color={Colors.gold} style={{ marginTop: 40 }} />
+        ) : (
+          <>
+            {/* ── Blackjack ─────────────────────────────────────────────── */}
+            <Text style={styles.gameLabel}>♠  Blackjack</Text>
+            <StatsBlock
+              wins={bj.wins}
+              losses={bj.losses}
+              total={bjTotal}
+              winRate={bjWinRate}
+            />
+
+            <View style={styles.sectionGap} />
+
+            {/* ── Poker ─────────────────────────────────────────────────── */}
+            <Text style={styles.gameLabel}>🃏  Poker</Text>
+            <StatsBlock
+              wins={pk.wins}
+              losses={pk.losses}
+              ties={pk.ties}
+              total={pkTotal}
+              winRate={pkWinRate}
+            />
+
+            <View style={styles.divider} />
+
+            <Pressable style={styles.resetBtn} onPress={handleReset}>
+              <Text style={styles.resetBtnText}>Reset All Stats</Text>
+            </Pressable>
+          </>
+        )}
+
+        <Pressable style={styles.backBtn} onPress={onBack}>
+          <Text style={styles.backBtnText}>← Back</Text>
+        </Pressable>
+      </ScrollView>
+    </View>
+  );
+}
+
+// ── StatsBlock — reusable card for one game's stats ───────────────────────────
+
+function StatsBlock({ wins, losses, ties, total, winRate }) {
+  const lossRate = total === 0 ? 0 : 100 - winRate;
+  const hasTies  = ties != null;
+
+  return (
+    <View style={styles.card}>
+      {/* Tiles */}
+      <View style={styles.tileRow}>
+        <View style={[styles.tile, styles.tileWin]}>
+          <Text style={styles.tileNumber}>{wins}</Text>
+          <Text style={styles.tileLabel}>Wins</Text>
+        </View>
+        {hasTies && (
+          <View style={[styles.tile, styles.tileTie]}>
+            <Text style={styles.tileNumber}>{ties}</Text>
+            <Text style={styles.tileLabel}>Ties</Text>
           </View>
+        )}
+        <View style={[styles.tile, styles.tileLoss]}>
+          <Text style={styles.tileNumber}>{losses}</Text>
+          <Text style={styles.tileLabel}>Losses</Text>
+        </View>
+      </View>
 
-          {/* Summary card */}
-          <View style={styles.card}>
-            <StatRow label="Total Games" value={total} />
-            <View style={styles.cardDivider} />
-            <StatRow label="Win Rate" value={`${winRate}%`} highlight />
-            <View style={styles.cardDivider} />
-            <StatRow label="Loss Rate" value={`${lossRate}%`} />
+      {/* Summary rows */}
+      <StatRow label="Hands Played" value={total} />
+      <View style={styles.cardDivider} />
+      <StatRow label="Win Rate"  value={`${winRate}%`}  highlight />
+      <View style={styles.cardDivider} />
+      <StatRow label="Loss Rate" value={`${lossRate}%`} />
 
-            {total > 0 && (
-              <View style={styles.barTrack}>
-                <View style={[styles.barFill, { flex: winRate }]} />
-                <View style={[styles.barLoss, { flex: lossRate }]} />
-              </View>
-            )}
-          </View>
-
-          <Pressable style={styles.resetBtn} onPress={handleReset}>
-            <Text style={styles.resetBtnText}>Reset Stats</Text>
-          </Pressable>
-        </>
+      {/* Win / loss bar */}
+      {total > 0 && (
+        <View style={styles.barTrack}>
+          <View style={[styles.barFill, { flex: Math.max(winRate,  1) }]} />
+          <View style={[styles.barLoss, { flex: Math.max(lossRate, 1) }]} />
+        </View>
       )}
-
-      <Pressable style={styles.backBtn} onPress={onBack}>
-        <Text style={styles.backBtnText}>← Back</Text>
-      </Pressable>
     </View>
   );
 }
@@ -136,174 +182,96 @@ function StatRow({ label, value, highlight }) {
   );
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.bg,
+  container: { flex: 1, backgroundColor: Colors.bg },
+
+  scroll: {
     alignItems: "center",
-    justifyContent: "center",
-    padding: 28,
+    paddingVertical: 40,
+    paddingHorizontal: 24,
+    width: "100%",
   },
 
   title: {
-    fontSize: 38,
-    fontWeight: "900",
-    color: Colors.gold,
-    letterSpacing: 3,
+    fontSize: 38, fontWeight: "900", color: Colors.gold, letterSpacing: 3,
     textShadowColor: "rgba(255,215,0,0.2)",
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
   },
 
-  subtitle: {
-    fontSize: 15,
-    color: Colors.textMuted,
-    marginTop: 4,
-    letterSpacing: 0.5,
-  },
+  subtitle: { fontSize: 15, color: Colors.textMuted, marginTop: 4, letterSpacing: 0.5 },
 
   divider: {
-    width: "60%",
-    height: 1,
-    backgroundColor: Colors.border,
-    marginVertical: 24,
+    width: "60%", height: 1, backgroundColor: Colors.border, marginVertical: 24,
   },
 
-  tileRow: {
-    flexDirection: "row",
-    gap: 16,
-    marginBottom: 20,
-    width: "100%",
+  gameLabel: {
+    fontSize: 13, fontWeight: "800", color: Colors.goldDim,
+    letterSpacing: 2, textTransform: "uppercase",
+    alignSelf: "flex-start", marginBottom: 10,
   },
+
+  sectionGap: { height: 24 },
+
+  // ── Card ──────────────────────────────────────────────────────────────────
+  card: {
+    width: "100%", backgroundColor: Colors.bgCard,
+    borderRadius: 18, padding: 18,
+    borderWidth: 1, borderColor: Colors.border,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5, shadowRadius: 10, elevation: 8,
+  },
+
+  tileRow: { flexDirection: "row", gap: 10, marginBottom: 16 },
 
   tile: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 6,
+    flex: 1, alignItems: "center", paddingVertical: 16,
+    borderRadius: 14, borderWidth: 1,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4, shadowRadius: 6, elevation: 5,
   },
+  tileWin:  { backgroundColor: "#0d2e14", borderColor: Colors.greenLight },
+  tileTie:  { backgroundColor: "#1a2700", borderColor: Colors.goldDim },
+  tileLoss: { backgroundColor: "#2a0e0e", borderColor: "#8b2020" },
 
-  tileWin: {
-    backgroundColor: "#0d2e14",
-    borderColor: Colors.greenLight,
-  },
-
-  tileLoss: {
-    backgroundColor: "#2a0e0e",
-    borderColor: "#8b2020",
-  },
-
-  tileNumber: {
-    fontSize: 40,
-    fontWeight: "900",
-    color: Colors.white,
-  },
-
+  tileNumber: { fontSize: 34, fontWeight: "900", color: Colors.white },
   tileLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: Colors.textMuted,
-    letterSpacing: 1.5,
-    textTransform: "uppercase",
-    marginTop: 4,
-  },
-
-  card: {
-    width: "100%",
-    backgroundColor: Colors.bgCard,
-    borderRadius: 18,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginBottom: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 8,
+    fontSize: 11, fontWeight: "700", color: Colors.textMuted,
+    letterSpacing: 1.5, textTransform: "uppercase", marginTop: 2,
   },
 
   cardDivider: {
-    height: 1,
-    backgroundColor: Colors.border,
-    marginVertical: 10,
-    opacity: 0.5,
+    height: 1, backgroundColor: Colors.border, marginVertical: 10, opacity: 0.5,
   },
 
   statRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 4,
+    flexDirection: "row", justifyContent: "space-between",
+    alignItems: "center", paddingVertical: 4,
   },
-
-  statLabel: {
-    fontSize: 15,
-    color: Colors.textMuted,
-    letterSpacing: 0.3,
-  },
-
-  statValue: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: Colors.white,
-  },
-
-  statValueHighlight: {
-    color: Colors.gold,
-    fontSize: 18,
-  },
+  statLabel:            { fontSize: 15, color: Colors.textMuted, letterSpacing: 0.3 },
+  statValue:            { fontSize: 16, fontWeight: "700", color: Colors.white },
+  statValueHighlight:   { color: Colors.gold, fontSize: 18 },
 
   barTrack: {
-    flexDirection: "row",
-    height: 8,
-    borderRadius: 4,
-    overflow: "hidden",
-    marginTop: 16,
-    backgroundColor: Colors.bgInput,
+    flexDirection: "row", height: 8, borderRadius: 4,
+    overflow: "hidden", marginTop: 14, backgroundColor: Colors.bgInput,
   },
+  barFill: { backgroundColor: Colors.greenLight },
+  barLoss: { backgroundColor: Colors.red },
 
-  barFill: {
-    backgroundColor: Colors.greenLight,
-  },
-
-  barLoss: {
-    backgroundColor: Colors.red,
-  },
-
+  // ── Buttons ───────────────────────────────────────────────────────────────
   resetBtn: {
-    width: "100%",
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: "#2a0e0e",
-    borderWidth: 1,
-    borderColor: "#5a1c1c",
-    marginBottom: 12,
+    width: "100%", paddingVertical: 14, borderRadius: 12,
+    alignItems: "center", backgroundColor: "#2a0e0e",
+    borderWidth: 1, borderColor: "#5a1c1c", marginBottom: 12,
   },
+  resetBtnText: { color: "#e05555", fontSize: 15, fontWeight: "700", letterSpacing: 0.5 },
 
-  resetBtnText: {
-    color: "#e05555",
-    fontSize: 15,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-  },
-
-  backBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-  },
-
+  backBtn:     { paddingVertical: 10, paddingHorizontal: 20 },
   backBtnText: {
-    color: Colors.goldDim,
-    fontSize: 15,
-    fontWeight: "600",
+    color: Colors.goldDim, fontSize: 15, fontWeight: "600",
     textDecorationLine: "underline",
   },
 });
