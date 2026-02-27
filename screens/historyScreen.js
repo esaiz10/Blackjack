@@ -11,7 +11,6 @@ import {
   collection,
   query,
   where,
-  orderBy,
   limit,
   getDocs,
 } from "firebase/firestore";
@@ -24,11 +23,16 @@ async function fetchHistory() {
   const q = query(
     collection(db, "games"),
     where("userId", "==", user.uid),
-    orderBy("playedAt", "desc"),
     limit(100)
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Sort newest first client-side (avoids needing a composite index)
+  return docs.sort((a, b) => {
+    const ta = a.playedAt?.toDate?.() ?? new Date(0);
+    const tb = b.playedAt?.toDate?.() ?? new Date(0);
+    return tb - ta;
+  });
 }
 
 // Format Firestore timestamp → "Jan 5, 3:42 PM"
