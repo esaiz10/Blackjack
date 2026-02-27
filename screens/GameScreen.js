@@ -39,6 +39,11 @@ async function recordResult(result) {
 async function saveGame(result, playerHand, dealerHand, getScore) {
   const user = auth.currentUser;
   if (!user) return;
+  if (!result || !Array.isArray(playerHand) || playerHand.length === 0
+               || !Array.isArray(dealerHand) || dealerHand.length === 0) {
+    console.warn("saveGame: skipping save — incomplete hand data", { result, playerHand, dealerHand });
+    return;
+  }
   try {
     await addDoc(collection(db, "games"), {
       userId:      user.uid,
