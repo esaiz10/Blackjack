@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
   View, Text, Pressable, StyleSheet,
-  ActivityIndicator, Alert, ScrollView,
+  ActivityIndicator, Alert, ScrollView, SafeAreaView,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { auth } from "../firebaseConfig";
@@ -76,7 +76,7 @@ export default function StatsScreen({ onBack }) {
   const pkWinRate = pkTotal === 0 ? 0 : Math.round((pk.wins / pkTotal) * 100);
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
@@ -102,7 +102,7 @@ export default function StatsScreen({ onBack }) {
             <View style={styles.sectionGap} />
 
             {/* ── Poker ─────────────────────────────────────────────────── */}
-            <Text style={styles.gameLabel}>🃏  Poker</Text>
+            <Text style={[styles.gameLabel, { color: '#e07070' }]}>♥  Poker</Text>
             <StatsBlock
               wins={pk.wins}
               losses={pk.losses}
@@ -123,7 +123,7 @@ export default function StatsScreen({ onBack }) {
           <Text style={styles.backBtnText}>← Back</Text>
         </Pressable>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 

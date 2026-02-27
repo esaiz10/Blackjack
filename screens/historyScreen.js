@@ -1,33 +1,18 @@
 import React, { useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  FlatList,
-  Pressable,
-  StyleSheet,
-  ActivityIndicator,
+  View, Text, FlatList, Pressable,
+  StyleSheet, ActivityIndicator, SafeAreaView,
 } from "react-native";
-import {
-  collection,
-  query,
-  where,
-  limit,
-  getDocs,
-} from "firebase/firestore";
+import { collection, query, where, limit, getDocs } from "firebase/firestore";
 import { auth, db } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
 
 async function fetchHistory() {
   const user = auth.currentUser;
   if (!user) throw new Error("Not signed in.");
-  const q = query(
-    collection(db, "games"),
-    where("userId", "==", user.uid),
-    limit(100)
-  );
+  const q = query(collection(db, "games"), where("userId", "==", user.uid), limit(100));
   const snap = await getDocs(q);
-  const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  // Sort newest first client-side (avoids needing a composite index)
+  const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   return docs.sort((a, b) => {
     const ta = a.playedAt?.toDate?.() ?? new Date(0);
     const tb = b.playedAt?.toDate?.() ?? new Date(0);
@@ -35,80 +20,78 @@ async function fetchHistory() {
   });
 }
 
-// Format Firestore timestamp → "Jan 5, 3:42 PM"
 function formatTime(ts) {
   if (!ts) return "";
   const date = ts.toDate ? ts.toDate() : new Date(ts);
-  return date.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-const RESULT_COLOR = {
-  win:  "#4cff80",
-  loss: "#ff5555",
-  push: "#FFD700",
-  bust: "#ff5555",
-};
-
-const RESULT_LABEL = {
-  win:  "WIN",
-  loss: "LOSS",
-  push: "PUSH",
-  bust: "BUST",
-};
+const RESULT_COLOR = { win: "#4cff80", loss: "#ff5555", push: "#FFD700", bust: "#ff5555", tie: "#FFD700" };
+const RESULT_LABEL = { win: "WIN", loss: "LOSS", push: "PUSH", bust: "BUST", tie: "TIE" };
+const GAME_TYPE_COLOR = { blackjack: Colors.goldDim, poker: "#e07070" };
+const GAME_TYPE_LABEL = { blackjack: "♠ BJ", poker: "♥ PKR" };
 
 export default function HistoryScreen({ onBack }) {
-  const [games, setGames] = useState([]);
+  const [games,   setGames]   = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error,   setError]   = useState(null);
 
   useEffect(() => {
     fetchHistory()
       .then(setGames)
-      .catch((e) => setError(e.message))
+      .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
-  const renderItem = ({ item, index }) => (
-    <View style={styles.row}>
-      {/* Index + result badge */}
-      <View style={styles.leftCol}>
-        <Text style={styles.rowIndex}>#{index + 1}</Text>
-        <View style={[styles.badge, { borderColor: RESULT_COLOR[item.result] }]}>
-          <Text style={[styles.badgeText, { color: RESULT_COLOR[item.result] }]}>
-            {RESULT_LABEL[item.result] ?? (item.result ? item.result.toUpperCase() : "?")}
+  const renderItem = ({ item, index }) => {
+    const resultColor = RESULT_COLOR[item.result] ?? Colors.textMuted;
+    const resultLabel = RESULT_LABEL[item.result] ?? (item.result?.toUpperCase() ?? "?");
+    const gameType    = item.gameType ?? "blackjack";
+    const isPoker     = gameType === "poker";
+
+    return (
+      <View style={styles.row}>
+        {/* Left: index + game type + result */}
+        <View style={styles.leftCol}>
+          <Text style={styles.rowIndex}>#{index + 1}</Text>
+          <Text style={[styles.gameTypeTag, { color: GAME_TYPE_COLOR[gameType] ?? Colors.textMuted }]}>
+            {GAME_TYPE_LABEL[gameType] ?? gameType.toUpperCase()}
           </Text>
+          <View style={[styles.badge, { borderColor: resultColor }]}>
+            <Text style={[styles.badgeText, { color: resultColor }]}>{resultLabel}</Text>
+          </View>
         </View>
-      </View>
 
-      {/* Scores */}
-      <View style={styles.midCol}>
-        <Text style={styles.scoreLine}>
-          You <Text style={styles.scoreNum}>{item.playerScore}</Text>
-          {"  vs  "}
-          Dealer <Text style={styles.scoreNum}>{item.dealerScore}</Text>
-        </Text>
-        <Text style={styles.handText}>
-          You: {item.playerHand?.join(" ") ?? "—"}
-        </Text>
-        <Text style={styles.handText}>
-          Dealer: {item.dealerHand?.join(" ") ?? "—"}
-        </Text>
-      </View>
+        {/* Mid: score / hands */}
+        <View style={styles.midCol}>
+          {isPoker ? (
+            <Text style={styles.scoreLine}>
+              Final stack: <Text style={styles.scoreNum}>{item.playerScore ?? "—"}</Text>
+            </Text>
+          ) : (
+            <>
+              <Text style={styles.scoreLine}>
+                You <Text style={styles.scoreNum}>{item.playerScore}</Text>
+                {"  vs  "}
+                Dealer <Text style={styles.scoreNum}>{item.dealerScore}</Text>
+              </Text>
+              <Text style={styles.handText}>You: {item.playerHand?.join(" ") ?? "—"}</Text>
+              <Text style={styles.handText}>Dealer: {item.dealerHand?.join(" ") ?? "—"}</Text>
+            </>
+          )}
+        </View>
 
-      {/* Time */}
-      <Text style={styles.timeText}>{formatTime(item.playedAt)}</Text>
-    </View>
-  );
+        {/* Right: time */}
+        <Text style={styles.timeText}>{formatTime(item.playedAt)}</Text>
+      </View>
+    );
+  };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
+
       <Text style={styles.title}>History</Text>
-      <Text style={styles.subtitle}>Last 100 games</Text>
+      <Text style={styles.subtitle}>Last 100 games • Blackjack & Poker</Text>
       <View style={styles.divider} />
 
       {loading ? (
@@ -117,179 +100,102 @@ export default function HistoryScreen({ onBack }) {
         <View style={styles.errorBox}>
           <Text style={styles.errorTitle}>Could not load history</Text>
           <Text style={styles.errorMsg}>
-            Make sure your Firestore rules allow authenticated reads on the
-            'games' collection.{"\n\n"}{error}
+            Make sure Firestore rules allow reads on the 'games' collection.{"\n\n"}{error}
           </Text>
         </View>
       ) : games.length === 0 ? (
-        <Text style={styles.emptyText}>No games played yet. Go play!</Text>
+        <Text style={styles.emptyText}>No games yet — go play!</Text>
       ) : (
         <FlatList
           data={games}
-          keyExtractor={(item) => item.id}
+          keyExtractor={item => item.id}
           renderItem={renderItem}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         />
       )}
 
       <Pressable style={styles.backBtn} onPress={onBack}>
         <Text style={styles.backBtnText}>← Back</Text>
       </Pressable>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-    paddingTop: 60,
-    paddingHorizontal: 20,
+    flex: 1, backgroundColor: Colors.bg,
+    paddingTop: 20, paddingHorizontal: 18,
   },
 
   title: {
-    fontSize: 34,
-    fontWeight: "900",
-    color: Colors.gold,
-    letterSpacing: 3,
-    textAlign: "center",
+    fontSize: 32, fontWeight: "900", color: Colors.gold,
+    letterSpacing: 3, textAlign: "center",
     textShadowColor: "rgba(255,215,0,0.2)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
+    textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 8,
   },
 
   subtitle: {
-    fontSize: 13,
-    color: Colors.textMuted,
-    textAlign: "center",
-    marginTop: 4,
-    letterSpacing: 1,
+    fontSize: 12, color: Colors.textMuted, textAlign: "center",
+    marginTop: 4, letterSpacing: 0.5,
   },
 
   divider: {
-    width: "60%",
-    alignSelf: "center",
-    height: 1,
-    backgroundColor: Colors.border,
-    marginVertical: 20,
+    width: "60%", alignSelf: "center", height: 1,
+    backgroundColor: Colors.border, marginVertical: 16,
   },
 
-  list: {
-    paddingBottom: 20,
-  },
+  list: { paddingBottom: 12 },
 
   row: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: Colors.bgCard,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: Colors.bgCard, borderRadius: 12,
+    padding: 12, borderWidth: 1, borderColor: Colors.border,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35, shadowRadius: 5, elevation: 4,
   },
 
-  leftCol: {
-    alignItems: "center",
-    marginRight: 14,
-    width: 52,
-  },
+  leftCol: { alignItems: "center", marginRight: 12, width: 54 },
 
-  rowIndex: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    marginBottom: 6,
+  rowIndex: { fontSize: 10, color: Colors.textFaint, marginBottom: 4 },
+
+  gameTypeTag: {
+    fontSize: 10, fontWeight: "800", letterSpacing: 0.5, marginBottom: 5,
   },
 
   badge: {
-    borderWidth: 1.5,
-    borderRadius: 6,
-    paddingVertical: 3,
-    paddingHorizontal: 6,
+    borderWidth: 1.5, borderRadius: 6,
+    paddingVertical: 3, paddingHorizontal: 6,
   },
+  badgeText: { fontSize: 11, fontWeight: "900", letterSpacing: 0.5 },
 
-  badgeText: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-  },
+  midCol: { flex: 1 },
 
-  midCol: {
-    flex: 1,
-  },
+  scoreLine: { fontSize: 14, color: Colors.white, fontWeight: "600", marginBottom: 4 },
+  scoreNum:  { fontWeight: "900", color: Colors.gold },
 
-  scoreLine: {
-    fontSize: 14,
-    color: Colors.white,
-    fontWeight: "600",
-    marginBottom: 4,
-  },
-
-  scoreNum: {
-    fontWeight: "900",
-    color: Colors.gold,
-  },
-
-  handText: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    letterSpacing: 0.3,
-  },
+  handText: { fontSize: 11, color: Colors.textMuted, letterSpacing: 0.2, marginBottom: 1 },
 
   timeText: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    textAlign: "right",
-    marginLeft: 8,
-    maxWidth: 70,
-  },
-
-  separator: {
-    height: 8,
+    fontSize: 10, color: Colors.textFaint, textAlign: "right",
+    marginLeft: 8, maxWidth: 68,
   },
 
   emptyText: {
-    color: Colors.textMuted,
-    textAlign: "center",
-    marginTop: 40,
-    fontSize: 16,
+    color: Colors.textMuted, textAlign: "center", marginTop: 40, fontSize: 16,
   },
 
   errorBox: {
-    backgroundColor: "#2a0e0e",
-    borderRadius: 12,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "#5a1c1c",
-    marginTop: 20,
+    backgroundColor: Colors.redDark, borderRadius: 12, padding: 18,
+    borderWidth: 1, borderColor: Colors.red, marginTop: 16,
   },
-
-  errorTitle: {
-    color: "#ff5555",
-    fontWeight: "800",
-    fontSize: 16,
-    marginBottom: 8,
-  },
-
-  errorMsg: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    lineHeight: 20,
-  },
+  errorTitle: { color: Colors.redLight, fontWeight: "800", fontSize: 15, marginBottom: 6 },
+  errorMsg:   { color: Colors.textMuted, fontSize: 12, lineHeight: 19 },
 
   backBtn: {
-    paddingVertical: 14,
-    alignItems: "center",
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    marginTop: 8,
+    paddingVertical: 14, alignItems: "center",
+    borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6,
   },
-
-  backBtnText: {
-    color: Colors.goldDim,
-    fontSize: 15,
-    fontWeight: "600",
-    textDecorationLine: "underline",
-  },
+  backBtnText: { color: Colors.goldDim, fontSize: 14, fontWeight: "600", textDecorationLine: "underline" },
 });
