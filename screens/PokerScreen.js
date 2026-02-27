@@ -60,7 +60,8 @@ function activeBettors(players) {
 }
 
 function preflopOrder(players) {
-  return [0, 2, 3, 4, 1].filter(id => {
+  // Standard order: UTG (2) → HJ (3) → CO (4) → SB (0) → BB (1)
+  return [2, 3, 4, 0, 1].filter(id => {
     const p = players.find(x => x.id === id);
     return p && !p.folded && p.stack > 0;
   });
@@ -311,6 +312,8 @@ export default function PokerScreen({ onExitToWelcome }) {
   const scheduleAiActionRef = useRef(null);
   const advanceStreetRef    = useRef(null);
   const startHandRef        = useRef(null);
+  const aiTimerRef          = useRef(null);   // tracks the pending AI setTimeout
+  const handIdRef           = useRef(0);      // incremented each new hand; guards stale callbacks
 
   const RESULT_CFG = {
     win:  { label: 'You Win!',    color: '#4cff80', bg: 'rgba(20,120,50,0.2)',  border: '#4cff80' },
@@ -436,7 +439,10 @@ export default function PokerScreen({ onExitToWelcome }) {
     setAiThinking(true);
     setAiThinkingId(actorId);
 
-    setTimeout(() => {
+    const capturedHandId = handIdRef.current;
+    if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+    aiTimerRef.current = setTimeout(() => {
+      if (handIdRef.current !== capturedHandId) return; // stale — new hand started
       const actor    = currentPlayers.find(p => p.id === actorId);
       if (!actor) return;
       const aiToCall = Math.max(0, currentStreetMaxBet - actor.streetBet);
@@ -525,6 +531,10 @@ export default function PokerScreen({ onExitToWelcome }) {
   // ── startHand ─────────────────────────────────────────────────────────────────
 
   const startHand = () => {
+    // Cancel any pending AI timer and mark all its callbacks as stale
+    handIdRef.current += 1;
+    if (aiTimerRef.current) { clearTimeout(aiTimerRef.current); aiTimerRef.current = null; }
+
     let d = shuffleDeck(makeNewDeck());
     let ps = players.map(p => ({
       ...p,
@@ -540,13 +550,16 @@ export default function PokerScreen({ onExitToWelcome }) {
       return { ...p, hand };
     });
 
-    const sbStack = ps.find(p => p.id === 0)?.stack ?? STARTING_STACK;
-    const bbStack = ps.find(p => p.id === 1)?.stack ?? STARTING_STACK;
-    ps = updatePlayer(ps, 0, { stack: sbStack - SMALL_BLIND, streetBet: SMALL_BLIND });
-    ps = updatePlayer(ps, 1, { stack: bbStack - BIG_BLIND,   streetBet: BIG_BLIND   });
+    // Clamp blinds so stacks never go negative (all-in if short-stacked)
+    const sbStack  = ps.find(p => p.id === 0)?.stack ?? STARTING_STACK;
+    const bbStack  = ps.find(p => p.id === 1)?.stack ?? STARTING_STACK;
+    const sbActual = Math.min(SMALL_BLIND, sbStack);
+    const bbActual = Math.min(BIG_BLIND,   bbStack);
+    ps = updatePlayer(ps, 0, { stack: sbStack - sbActual, streetBet: sbActual });
+    ps = updatePlayer(ps, 1, { stack: bbStack - bbActual, streetBet: bbActual });
 
-    const initialPot          = SMALL_BLIND + BIG_BLIND;
-    const initialStreetMaxBet = BIG_BLIND;
+    const initialPot          = sbActual + bbActual;
+    const initialStreetMaxBet = bbActual;
     const initialToAct        = preflopOrder(ps);
 
     setPlayers(ps);
@@ -576,6 +589,13 @@ export default function PokerScreen({ onExitToWelcome }) {
       return () => clearTimeout(t);
     }
   }, [phase, players]);
+
+  // Cancel any pending AI timer when the screen unmounts
+  useEffect(() => {
+    return () => {
+      if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+    };
+  }, []);
 
   // ── humanAct ─────────────────────────────────────────────────────────────────
 

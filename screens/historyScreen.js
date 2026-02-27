@@ -3,21 +3,31 @@ import {
   View, Text, FlatList, Pressable,
   StyleSheet, ActivityIndicator, SafeAreaView,
 } from "react-native";
-import { collection, query, where, limit, getDocs } from "firebase/firestore";
+import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
 import { auth, db } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
 
 async function fetchHistory() {
   const user = auth.currentUser;
   if (!user) throw new Error("Not signed in.");
-  const q = query(collection(db, "games"), where("userId", "==", user.uid), limit(100));
+  const q = query(
+    collection(db, "games"),
+    where("userId", "==", user.uid),
+    orderBy("playedAt", "desc"),
+    limit(100),
+  );
   const snap = await getDocs(q);
-  const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  return docs.sort((a, b) => {
-    const ta = a.playedAt?.toDate?.() ?? new Date(0);
-    const tb = b.playedAt?.toDate?.() ?? new Date(0);
-    return tb - ta;
-  });
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+function friendlyError(msg) {
+  if (!msg) return msg;
+  if (msg.includes("permission") || msg.includes("Missing or insufficient"))
+    return "Permission denied — check Firestore security rules for the 'games' collection.";
+  if (msg.includes("index") || msg.includes("requires an index"))
+    return "Firestore needs a composite index for this query (userId + playedAt). " +
+      "Check the browser/device console for a direct link to create it.";
+  return msg;
 }
 
 function formatTime(ts) {
@@ -100,7 +110,7 @@ export default function HistoryScreen({ onBack }) {
         <View style={styles.errorBox}>
           <Text style={styles.errorTitle}>Could not load history</Text>
           <Text style={styles.errorMsg}>
-            Make sure Firestore rules allow reads on the 'games' collection.{"\n\n"}{error}
+            {friendlyError(error)}
           </Text>
         </View>
       ) : games.length === 0 ? (
