@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
 import {
   View, Text, FlatList, Pressable,
-  StyleSheet, ActivityIndicator, SafeAreaView,
+  StyleSheet, ActivityIndicator,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
 import { auth, db } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
@@ -10,23 +11,45 @@ import { Colors } from "../styles/theme";
 async function fetchHistory() {
   const user = auth.currentUser;
   if (!user) throw new Error("Not signed in.");
-  const q = query(
-    collection(db, "games"),
-    where("userId", "==", user.uid),
-    orderBy("playedAt", "desc"),
-    limit(100),
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  // Preferred: server-side sort (requires a composite index on userId + playedAt).
+  // Falls back to client-side sort when the index hasn't been built yet.
+  try {
+    const q = query(
+      collection(db, "games"),
+      where("userId", "==", user.uid),
+      orderBy("playedAt", "desc"),
+      limit(100),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (e) {
+    const msg = e?.message ?? "";
+    // "failed-precondition" is the Firestore code for a missing index
+    if (e?.code === "failed-precondition" || msg.includes("index") || msg.includes("requires an index")) {
+      console.warn("History: composite index missing — falling back to client-side sort.\n" +
+        "Create the index by visiting the link in the Firestore error above.");
+      const q2 = query(
+        collection(db, "games"),
+        where("userId", "==", user.uid),
+        limit(100),
+      );
+      const snap = await getDocs(q2);
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      return docs.sort((a, b) => {
+        const ta = a.playedAt?.toDate?.() ?? new Date(0);
+        const tb = b.playedAt?.toDate?.() ?? new Date(0);
+        return tb - ta;
+      });
+    }
+    throw e;
+  }
 }
 
 function friendlyError(msg) {
   if (!msg) return msg;
   if (msg.includes("permission") || msg.includes("Missing or insufficient"))
     return "Permission denied — check Firestore security rules for the 'games' collection.";
-  if (msg.includes("index") || msg.includes("requires an index"))
-    return "Firestore needs a composite index for this query (userId + playedAt). " +
-      "Check the browser/device console for a direct link to create it.";
   return msg;
 }
 
