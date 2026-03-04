@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View, ActivityIndicator, Platform, StyleSheet } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "./firebaseConfig";
 import LoginScreen from "./screens/LoginScreen";
@@ -68,15 +69,17 @@ export default function App() {
 
   if (Platform.OS === "web") {
     return (
-      <View style={webStyles.outer}>
-        <View style={webStyles.inner}>
-          {content}
+      <SafeAreaProvider>
+        <View style={webStyles.outer}>
+          <View style={webStyles.inner}>
+            {content}
+          </View>
         </View>
-      </View>
+      </SafeAreaProvider>
     );
   }
 
-  return content;
+  return <SafeAreaProvider>{content}</SafeAreaProvider>;
 }
 
 const webStyles = StyleSheet.create({
