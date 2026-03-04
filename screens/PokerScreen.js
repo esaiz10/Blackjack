@@ -117,6 +117,59 @@ async function savePokerGame(result, humanStack) {
   }
 }
 
+async function startPokerSession(startStack) {
+  const user = auth.currentUser;
+  if (!user) return null;
+  try {
+    const ref = await addDoc(collection(db, 'pokerGames'), {
+      userId:      user.uid,
+      startedAt:   serverTimestamp(),
+      endedAt:     null,
+      handsPlayed: 0,
+      wins:        0,
+      losses:      0,
+      ties:        0,
+      startStack,
+      finalStack:  null,
+      netChips:    null,
+    });
+    return ref.id;
+  } catch (e) {
+    console.error('startPokerSession failed:', e);
+    return null;
+  }
+}
+
+async function saveHandRecord(gameId, handData) {
+  if (!gameId) return;
+  try {
+    await addDoc(collection(db, 'pokerGames', gameId, 'hands'), {
+      ...handData,
+      playedAt: serverTimestamp(),
+    });
+    const update = { handsPlayed: increment(1) };
+    if (handData.result === 'win')       update.wins   = increment(1);
+    else if (handData.result === 'loss') update.losses = increment(1);
+    else if (handData.result === 'tie')  update.ties   = increment(1);
+    await setDoc(doc(db, 'pokerGames', gameId), update, { merge: true });
+  } catch (e) {
+    console.error('saveHandRecord failed:', e);
+  }
+}
+
+async function endPokerSession(gameId, finalStack, netChips) {
+  if (!gameId) return;
+  try {
+    await setDoc(doc(db, 'pokerGames', gameId), {
+      endedAt:    serverTimestamp(),
+      finalStack,
+      netChips,
+    }, { merge: true });
+  } catch (e) {
+    console.error('endPokerSession failed:', e);
+  }
+}
+
 // ── BetSlider ──────────────────────────────────────────────────────────────────
 
 function BetSlider({ min, max, value, onValueChange }) {
@@ -321,6 +374,9 @@ export default function PokerScreen({ onExitToWelcome }) {
   const startHandRef        = useRef(null);
   const aiTimerRef          = useRef(null);   // tracks the pending AI setTimeout
   const handIdRef           = useRef(0);      // incremented each new hand; guards stale callbacks
+  const gameSessionIdRef    = useRef(null);   // Firestore pokerGames doc ID for this session
+  const handNumberRef       = useRef(0);      // hand counter within the session
+  const handActionsRef      = useRef({ preflop: [], flop: [], turn: [], river: [] });
 
   const RESULT_CFG = {
     win:  { label: 'You Win!',    color: '#4cff80', bg: 'rgba(20,120,50,0.2)',  border: '#4cff80' },
@@ -376,11 +432,24 @@ export default function PokerScreen({ onExitToWelcome }) {
     }
     setResult(res);
     setStatusMsg(msg);
+    handNumberRef.current += 1;
     recordPokerResult(res);
     savePokerGame(res, humanNewStack);
+    saveHandRecord(gameSessionIdRef.current, {
+      handNumber:     handNumberRef.current,
+      result:         res,
+      pot:            currentPot,
+      playerHand:     humanPlayer?.hand ?? [],
+      communityCards: comm,
+      playerHandName: humanPlayer?.handName ?? '',
+      playerStack:    humanNewStack,
+      netChips:       humanNewStack - handStartStackRef.current,
+      endReason:      'showdown',
+      actions:        handActionsRef.current,
+    });
   }
 
-  function endHandLastManStanding(winnerId, ps, currentPot) {
+  function endHandLastManStanding(winnerId, ps, currentPot, currentCommunity) {
     const winner  = ps.find(p => p.id === winnerId);
     const updated = updatePlayer(ps, winnerId, { stack: (winner?.stack ?? 0) + currentPot });
     const humanNewStack = updated.find(p => p.id === 0)?.stack ?? 0;
@@ -398,8 +467,22 @@ export default function PokerScreen({ onExitToWelcome }) {
         ? 'Everyone folded — you win!'
         : `${winner?.name} wins — everyone folded`
     );
+    handNumberRef.current += 1;
     recordPokerResult(res);
     savePokerGame(res, humanNewStack);
+    const humanPs = ps.find(p => p.id === 0);
+    saveHandRecord(gameSessionIdRef.current, {
+      handNumber:     handNumberRef.current,
+      result:         res,
+      pot:            currentPot,
+      playerHand:     humanPs?.hand ?? [],
+      communityCards: currentCommunity ?? [],
+      playerHandName: '',
+      playerStack:    humanNewStack,
+      netChips:       humanNewStack - handStartStackRef.current,
+      endReason:      'fold',
+      actions:        handActionsRef.current,
+    });
   }
 
   // ── processNextTurn ───────────────────────────────────────────────────────────
@@ -410,7 +493,7 @@ export default function PokerScreen({ onExitToWelcome }) {
   ) => {
     const active = currentPlayers.filter(p => !p.folded);
     if (active.length === 1) {
-      endHandLastManStanding(active[0].id, currentPlayers, currentPot);
+      endHandLastManStanding(active[0].id, currentPlayers, currentPot, currentCommunity);
       return;
     }
     if (currentToAct.length === 0) {
@@ -453,10 +536,11 @@ export default function PokerScreen({ onExitToWelcome }) {
       const actor    = currentPlayers.find(p => p.id === actorId);
       if (!actor) return;
       const aiToCall = Math.max(0, currentStreetMaxBet - actor.streetBet);
-      const decision = getPokerAiDecision(actor.hand, currentCommunity, currentPot, aiToCall, actor.stack);
+      const decision = getPokerAiDecision(actor.hand, currentCommunity, currentPot, aiToCall, actor.stack, actorId);
       const nextToAct = currentToAct.slice(1);
 
       if (decision === 'fold') {
+        logAction(currentPhase, actor.name, 'fold');
         setLastAction(prev => ({ ...prev, [actorId]: 'Folded' }));
         const newPs = updatePlayer(currentPlayers, actorId, { folded: true });
         setPlayers(newPs);
@@ -464,12 +548,14 @@ export default function PokerScreen({ onExitToWelcome }) {
         processNextTurnRef.current(nextToAct, newPs, currentStreetMaxBet, currentPot, currentPhase, currentDeck, currentCommunity);
 
       } else if (decision === 'check' || (decision === 'call' && aiToCall === 0)) {
+        logAction(currentPhase, actor.name, 'check');
         setLastAction(prev => ({ ...prev, [actorId]: 'Checked' }));
         setAiThinking(false); setAiThinkingId(null);
         processNextTurnRef.current(nextToAct, currentPlayers, currentStreetMaxBet, currentPot, currentPhase, currentDeck, currentCommunity);
 
       } else if (decision === 'call') {
         const callAmt = Math.min(aiToCall, actor.stack);
+        logAction(currentPhase, actor.name, 'call', callAmt);
         setLastAction(prev => ({ ...prev, [actorId]: `Called ${callAmt}` }));
         const newPot = currentPot + callAmt;
         const newPs  = updatePlayer(currentPlayers, actorId, {
@@ -489,6 +575,7 @@ export default function PokerScreen({ onExitToWelcome }) {
         const newPs        = updatePlayer(currentPlayers, actorId, {
           stack: actor.stack - raisePays, streetBet: newStreetBet,
         });
+        logAction(currentPhase, actor.name, 'raise', newStreetBet);
         setLastAction(prev => ({ ...prev, [actorId]: `Raised → ${newStreetBet}` }));
         const newToAct = toActAfterRaise(actorId, newPs);
         setPot(newPot); setStreetMaxBet(newStreetMax); setPlayers(newPs);
@@ -535,6 +622,16 @@ export default function PokerScreen({ onExitToWelcome }) {
     processNextTurnRef.current(newToAct, resetPlayers, 0, currentPot, nextPhase, newDeck, newCommunity);
   };
 
+  // ── Action logger ─────────────────────────────────────────────────────────────
+
+  function logAction(street, playerName, action, amount) {
+    const key = street === 'showdown' || street === 'done' ? 'river' : street;
+    if (!handActionsRef.current[key]) handActionsRef.current[key] = [];
+    const entry = { player: playerName, action };
+    if (amount != null) entry.amount = amount;
+    handActionsRef.current[key].push(entry);
+  }
+
   // ── startHand ─────────────────────────────────────────────────────────────────
 
   const startHand = () => {
@@ -550,6 +647,7 @@ export default function PokerScreen({ onExitToWelcome }) {
     }));
 
     handStartStackRef.current = ps.find(p => p.id === 0)?.stack ?? STARTING_STACK;
+    handActionsRef.current = { preflop: [], flop: [], turn: [], river: [] };
 
     ps = ps.map(p => {
       const { hand, deck: d2 } = deal(d, 2);
@@ -564,6 +662,8 @@ export default function PokerScreen({ onExitToWelcome }) {
     const bbActual = Math.min(BIG_BLIND,   bbStack);
     ps = updatePlayer(ps, 0, { stack: sbStack - sbActual, streetBet: sbActual });
     ps = updatePlayer(ps, 1, { stack: bbStack - bbActual, streetBet: bbActual });
+    logAction('preflop', 'You', 'blind', sbActual);
+    logAction('preflop', ps.find(p => p.id === 1)?.name ?? AI_NAMES[0], 'blind', bbActual);
 
     const initialPot          = sbActual + bbActual;
     const initialStreetMaxBet = bbActual;
@@ -587,7 +687,10 @@ export default function PokerScreen({ onExitToWelcome }) {
   };
 
   startHandRef.current = startHand;
-  useEffect(() => { startHand(); }, []);
+  useEffect(() => {
+    startPokerSession(STARTING_STACK).then(id => { gameSessionIdRef.current = id; });
+    startHand();
+  }, []);
 
   useEffect(() => {
     const human = players.find(p => p.id === 0);
@@ -611,6 +714,7 @@ export default function PokerScreen({ onExitToWelcome }) {
     if (!human) return;
 
     if (decision === 'fold') {
+      logAction(phase, 'You', 'fold');
       setLastAction(prev => ({ ...prev, [0]: 'Folded' }));
       const newPs = updatePlayer(players, 0, { folded: true });
       setPlayers(newPs);
@@ -618,12 +722,14 @@ export default function PokerScreen({ onExitToWelcome }) {
       return;
     }
     if (decision === 'check') {
+      logAction(phase, 'You', 'check');
       setLastAction(prev => ({ ...prev, [0]: 'Checked' }));
       processNextTurnRef.current(toAct.slice(1), players, streetMaxBet, pot, phase, deck, community);
       return;
     }
     if (decision === 'call') {
       const callAmt = Math.min(streetMaxBet - human.streetBet, human.stack);
+      logAction(phase, 'You', 'call', callAmt);
       setLastAction(prev => ({ ...prev, [0]: `Called ${callAmt}` }));
       const newPot = pot + callAmt;
       const newPs  = updatePlayer(players, 0, {
@@ -642,6 +748,7 @@ export default function PokerScreen({ onExitToWelcome }) {
       const newPs        = updatePlayer(players, 0, {
         stack: human.stack - raiseAmt, streetBet: newStreetBet,
       });
+      logAction(phase, 'You', 'raise', newStreetBet);
       setLastAction(prev => ({ ...prev, [0]: `Raised → ${newStreetBet}` }));
       const newToAct = toActAfterRaise(0, newPs);
       setPot(newPot); setStreetMaxBet(newStreetMax); setPlayers(newPs);
@@ -762,7 +869,11 @@ export default function PokerScreen({ onExitToWelcome }) {
           <Pressable style={w.navBtn} onPress={startHand}>
             <Text style={w.navText}>New Hand</Text>
           </Pressable>
-          <Pressable style={w.navBtn} onPress={() => onExitToWelcome?.()}>
+          <Pressable style={w.navBtn} onPress={() => {
+            const human = players.find(p => p.id === 0);
+            endPokerSession(gameSessionIdRef.current, human?.stack ?? 0, sessionNet);
+            onExitToWelcome?.();
+          }}>
             <Text style={w.navText}>← Menu</Text>
           </Pressable>
         </View>
@@ -875,7 +986,11 @@ export default function PokerScreen({ onExitToWelcome }) {
           <Pressable style={m.navBtn} onPress={startHand}>
             <Text style={m.navText}>New Hand</Text>
           </Pressable>
-          <Pressable style={m.navBtn} onPress={() => onExitToWelcome?.()}>
+          <Pressable style={m.navBtn} onPress={() => {
+            const human = players.find(p => p.id === 0);
+            endPokerSession(gameSessionIdRef.current, human?.stack ?? 0, sessionNet);
+            onExitToWelcome?.();
+          }}>
             <Text style={m.navText}>← Menu</Text>
           </Pressable>
         </View>
