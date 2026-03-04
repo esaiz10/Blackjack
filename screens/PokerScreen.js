@@ -3,11 +3,11 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import {
-  View, Text, Image, Pressable, ScrollView, SafeAreaView,
+  View, Text, Image, Pressable, ScrollView,
   StyleSheet, PanResponder, Platform,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { collection, addDoc, serverTimestamp, doc, setDoc, increment } from 'firebase/firestore';
 
 import { gameStyles } from '../styles/GameStyles';
 import { makeNewDeck, shuffleDeck, deal } from '../components/deck';
@@ -22,7 +22,6 @@ import { Colors } from '../styles/theme';
 const STARTING_STACK = 1000;
 const SMALL_BLIND    = 10;
 const BIG_BLIND      = 20;
-const POKER_STATS_KEY = 'poker_stats_v1';
 const AI_NAMES        = ['Alex', 'Blake', 'Casey', 'Dana'];
 
 const STREET_LABEL = {
@@ -79,13 +78,15 @@ function toActAfterRaise(raiserId, players) {
 // ── Persistence ────────────────────────────────────────────────────────────────
 
 async function recordPokerResult(result) {
+  const user = auth.currentUser;
+  if (!user) return;
   try {
-    const raw   = await AsyncStorage.getItem(POKER_STATS_KEY);
-    const stats = raw ? JSON.parse(raw) : { wins: 0, losses: 0, ties: 0 };
-    if (result === 'win')       stats.wins   += 1;
-    else if (result === 'loss') stats.losses += 1;
-    else if (result === 'tie')  stats.ties   += 1;
-    await AsyncStorage.setItem(POKER_STATS_KEY, JSON.stringify(stats));
+    const ref = doc(db, "stats", user.uid);
+    const update = {};
+    if (result === 'win')       update["poker.wins"]   = increment(1);
+    else if (result === 'loss') update["poker.losses"] = increment(1);
+    else if (result === 'tie')  update["poker.ties"]   = increment(1);
+    await setDoc(ref, update, { merge: true });
   } catch (e) {
     console.error('recordPokerResult failed:', e);
   }

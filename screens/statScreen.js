@@ -1,22 +1,20 @@
 import React, { useEffect, useState } from "react";
 import {
   View, Text, Pressable, StyleSheet,
-  ActivityIndicator, Alert, ScrollView, SafeAreaView,
+  ActivityIndicator, Alert, ScrollView,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { auth } from "../firebaseConfig";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { auth, db } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
 
-const BJ_KEY    = "blackjack_stats_v1";
-const POKER_KEY = "poker_stats_v1";
-
 async function loadAll() {
-  const [bjRaw, pkRaw] = await Promise.all([
-    AsyncStorage.getItem(BJ_KEY),
-    AsyncStorage.getItem(POKER_KEY),
-  ]);
-  const bj = bjRaw ? JSON.parse(bjRaw) : {};
-  const pk = pkRaw ? JSON.parse(pkRaw) : {};
+  const user = auth.currentUser;
+  if (!user) return { bj: { wins: 0, losses: 0 }, pk: { wins: 0, losses: 0, ties: 0 } };
+  const snap = await getDoc(doc(db, "stats", user.uid));
+  const data = snap.exists() ? snap.data() : {};
+  const bj = data.blackjack || {};
+  const pk = data.poker || {};
   return {
     bj: { wins: bj.wins ?? 0, losses: bj.losses ?? 0 },
     pk: { wins: pk.wins ?? 0, losses: pk.losses ?? 0, ties: pk.ties ?? 0 },
@@ -24,10 +22,12 @@ async function loadAll() {
 }
 
 async function clearAll() {
-  await Promise.all([
-    AsyncStorage.setItem(BJ_KEY,    JSON.stringify({ wins: 0, losses: 0 })),
-    AsyncStorage.setItem(POKER_KEY, JSON.stringify({ wins: 0, losses: 0, ties: 0 })),
-  ]);
+  const user = auth.currentUser;
+  if (!user) return;
+  await setDoc(doc(db, "stats", user.uid), {
+    blackjack: { wins: 0, losses: 0 },
+    poker:     { wins: 0, losses: 0, ties: 0 },
+  });
 }
 
 export default function StatsScreen({ onBack }) {
