@@ -4,7 +4,7 @@ A React Native casino app with Blackjack and Texas Hold'em Poker, built with Exp
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18 or higher)
+- [Node.js](https://nodejs.org/) (LTS v20 or v22; avoid v24 for Expo SDK 54)
 - [npm](https://www.npmjs.com/) (comes with Node.js)
 - [Expo Go](https://expo.dev/go) app on your phone (optional, for mobile)
 
@@ -18,6 +18,7 @@ A React Native casino app with Blackjack and Texas Hold'em Poker, built with Exp
 
 2. **Install dependencies**
    ```bash
+   nvm use
    npm install
    ```
 
