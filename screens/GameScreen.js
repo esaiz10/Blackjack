@@ -5,11 +5,10 @@ import {
   Image,
   Pressable,
   ScrollView,
-  SafeAreaView,
   StyleSheet,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { collection, addDoc, serverTimestamp, doc, setDoc, increment } from "firebase/firestore";
 
 import { gameStyles } from "../styles/GameStyles";
 import { makeNewDeck, shuffleDeck, deal } from "../components/deck";
@@ -18,17 +17,17 @@ import { getDealerDecision } from "../components/aiPlayer";
 import { auth, db } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
 
-// ── Stats (AsyncStorage) ──────────────────────────────────────────────────────
-
-const STATS_KEY = "blackjack_stats_v1";
+// ── Stats (Firestore) ─────────────────────────────────────────────────────────
 
 async function recordResult(result) {
+  const user = auth.currentUser;
+  if (!user) return;
   try {
-    const raw = await AsyncStorage.getItem(STATS_KEY);
-    const stats = raw ? JSON.parse(raw) : { wins: 0, losses: 0 };
-    if (result === "win") stats.wins += 1;
-    if (result === "loss") stats.losses += 1;
-    await AsyncStorage.setItem(STATS_KEY, JSON.stringify(stats));
+    const ref = doc(db, "stats", user.uid);
+    const update = {};
+    if (result === "win")  update["blackjack.wins"]   = increment(1);
+    if (result === "loss") update["blackjack.losses"]  = increment(1);
+    await setDoc(ref, update, { merge: true });
   } catch (e) {
     console.error("recordResult failed:", e);
   }
