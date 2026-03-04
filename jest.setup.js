@@ -25,5 +25,10 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 jest.mock('firebase/firestore', () => ({
   collection: jest.fn(),
   addDoc: jest.fn(),
+  query: jest.fn((...args) => args),
+  where: jest.fn((...args) => args),
+  orderBy: jest.fn((...args) => args),
+  limit: jest.fn((...args) => args),
+  getDocs: jest.fn(async () => ({ docs: [] })),
   serverTimestamp: jest.fn(() => ({ seconds: 0, nanoseconds: 0 })),
 }));
