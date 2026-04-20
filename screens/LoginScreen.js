@@ -17,6 +17,8 @@ import {
 } from "firebase/auth";
 import { auth } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
+import BackgroundLayers from "../components/BackgroundLayers";
+import FadeInView from "../components/FadeInView";
 
 export default function LoginScreen() {
   const [mode, setMode] = useState("login"); // "login" | "register"
@@ -86,19 +88,20 @@ export default function LoginScreen() {
       style={styles.root}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      <BackgroundLayers />
       <ScrollView
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
-        <View style={styles.header}>
+        <FadeInView style={styles.header} delay={0}>
           <Text style={styles.suit}>♠ ♥</Text>
           <Text style={styles.title}>Blackjack</Text>
           <Text style={styles.suit}>♦ ♣</Text>
-        </View>
+        </FadeInView>
 
         {/* Card */}
-        <View style={styles.card}>
+        <FadeInView style={styles.card} delay={80}>
           <Text style={styles.cardTitle}>{isLogin ? "Sign In" : "Create Account"}</Text>
 
           {/* Name — register only */}
@@ -177,7 +180,7 @@ export default function LoginScreen() {
                 : "Already have an account?  Log in"}
             </Text>
           </Pressable>
-        </View>
+        </FadeInView>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -187,6 +190,7 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: Colors.bg,
+    position: "relative",
   },
 
   scroll: {

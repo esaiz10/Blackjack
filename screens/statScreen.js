@@ -7,6 +7,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
+import BackgroundLayers from "../components/BackgroundLayers";
+import FadeInView from "../components/FadeInView";
 
 async function loadAll() {
   const user = auth.currentUser;
@@ -76,13 +78,16 @@ export default function StatsScreen({ onBack }) {
   const pkWinRate = pkTotal === 0 ? 0 : Math.round((pk.wins / pkTotal) * 100);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { position: "relative" }]}>
+      <BackgroundLayers />
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.title}>Stats</Text>
-        <Text style={styles.subtitle}>{displayName}</Text>
+        <FadeInView delay={0}>
+          <Text style={styles.title}>Stats</Text>
+          <Text style={styles.subtitle}>{displayName}</Text>
+        </FadeInView>
 
         <View style={styles.divider} />
 

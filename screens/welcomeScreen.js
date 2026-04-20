@@ -1,26 +1,30 @@
 import React from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Colors } from "../styles/theme";
+import BackgroundLayers from "../components/BackgroundLayers";
+import FadeInView from "../components/FadeInView";
 
 export default function WelcomeScreen({ user, onPlayGames, onStats, onHistory, onSignOut }) {
   const displayName = user?.displayName || user?.email?.split("@")[0] || "Player";
 
   return (
     <View style={styles.container}>
+      <BackgroundLayers />
 
       {/* ── Casino header ── */}
-      <View style={styles.header}>
+      <FadeInView style={styles.header} delay={0}>
         <Text style={styles.suitRow}>♠   ♥   ♦   ♣</Text>
         <Text style={styles.titleMain}>ROYAL</Text>
         <Text style={styles.titleSub}>CASINO</Text>
         <View style={styles.rule} />
         <Text style={styles.welcomeText}>Welcome back, {displayName}</Text>
-      </View>
+      </FadeInView>
 
       {/* ── Menu ── */}
       <View style={styles.menu}>
 
-        <MenuItem
+        <FadeInView delay={60}>
+          <MenuItem
           suit="♠"
           suitColor={Colors.gold}
           bg={Colors.green}
@@ -28,9 +32,11 @@ export default function WelcomeScreen({ user, onPlayGames, onStats, onHistory, o
           title="Play Games"
           sub="Blackjack & Poker"
           onPress={onPlayGames}
-        />
+          />
+        </FadeInView>
 
-        <MenuItem
+        <FadeInView delay={120}>
+          <MenuItem
           suit="◈"
           suitColor={Colors.goldDim}
           bg={Colors.bgCard}
@@ -38,9 +44,11 @@ export default function WelcomeScreen({ user, onPlayGames, onStats, onHistory, o
           title="Statistics"
           sub="Your win rates"
           onPress={onStats}
-        />
+          />
+        </FadeInView>
 
-        <MenuItem
+        <FadeInView delay={180}>
+          <MenuItem
           suit="◷"
           suitColor={Colors.goldDim}
           bg={Colors.bgCard}
@@ -48,9 +56,11 @@ export default function WelcomeScreen({ user, onPlayGames, onStats, onHistory, o
           title="History"
           sub="Last 100 games"
           onPress={onHistory}
-        />
+          />
+        </FadeInView>
 
-        <MenuItem
+        <FadeInView delay={240}>
+          <MenuItem
           suit="⏻"
           suitColor={Colors.redLight}
           bg={Colors.redDark}
@@ -58,7 +68,8 @@ export default function WelcomeScreen({ user, onPlayGames, onStats, onHistory, o
           title="Sign Out"
           titleColor="#e07070"
           onPress={onSignOut}
-        />
+          />
+        </FadeInView>
 
       </View>
     </View>
@@ -89,6 +100,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,
+    position: "relative",
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 28,

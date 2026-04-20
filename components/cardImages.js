@@ -62,4 +62,5 @@ export const cardImages = {
   "KC": require("./cards/king_of_clubs2.png"),
 
 };
-  
+
+export const cardImageList = Object.values(cardImages);

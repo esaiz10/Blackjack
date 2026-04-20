@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, ActivityIndicator, Platform, StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { onAuthStateChanged, signOut } from "firebase/auth";
+import { Asset } from "expo-asset";
 import { auth } from "./firebaseConfig";
 import LoginScreen from "./screens/LoginScreen";
 import WelcomeScreen from "./screens/welcomeScreen";
@@ -10,10 +11,12 @@ import StatsScreen from "./screens/statScreen";
 import HistoryScreen from "./screens/historyScreen";
 import GameSelectScreen from "./screens/GameSelectScreen";
 import PokerScreen from "./screens/PokerScreen";
+import { cardImageList } from "./components/cardImages";
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
+  const [assetsReady, setAssetsReady] = useState(false);
 
   // "welcome" | "gameSelect" | "game" | "poker" | "stats" | "history"
   const [screen, setScreen] = useState("welcome");
@@ -28,8 +31,23 @@ export default function App() {
     return unsub;
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadAssets = async () => {
+      try {
+        await Asset.loadAsync(cardImageList);
+      } catch (e) {
+        console.warn("Asset preload failed:", e);
+      } finally {
+        if (!cancelled) setAssetsReady(true);
+      }
+    };
+    loadAssets();
+    return () => { cancelled = true; };
+  }, []);
+
   function renderContent() {
-    if (checking) {
+    if (checking || !assetsReady) {
       return (
         <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0a1f0f" }}>
           <ActivityIndicator size="large" color="#FFD700" />

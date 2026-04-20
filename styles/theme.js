@@ -4,6 +4,9 @@ export const Colors = {
   bgCard:     '#0c1e11',
   bgInput:    '#040c06',
   felt:       '#091509',
+  bgGlowTop:  '#0f2a1a',
+  bgGlowLeft: '#0b1a12',
+  bgGlowRight:'#1d1208',
 
   // Gold
   gold:       '#FFD700',

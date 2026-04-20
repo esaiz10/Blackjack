@@ -2,22 +2,25 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Colors } from '../styles/theme';
+import BackgroundLayers from '../components/BackgroundLayers';
+import FadeInView from '../components/FadeInView';
 
 export default function GameSelectScreen({ onBlackjack, onPoker, onBack }) {
   return (
     <View style={styles.container}>
+      <BackgroundLayers />
 
       {/* ── Header ── */}
-      <View style={styles.header}>
+      <FadeInView style={styles.header} delay={0}>
         <Text style={styles.suitRow}>♠   ♥   ♦   ♣</Text>
         <Text style={styles.title}>Choose a Game</Text>
         <Text style={styles.subtitle}>Select your table</Text>
-      </View>
+      </FadeInView>
 
       <View style={styles.rule} />
 
       {/* ── Game cards ── */}
-      <View style={styles.cardGrid}>
+      <FadeInView style={styles.cardGrid} delay={80}>
 
         <Pressable
           style={({ pressed }) => [styles.gameCard, styles.bjCard, pressed && styles.cardPressed]}
@@ -43,15 +46,17 @@ export default function GameSelectScreen({ onBlackjack, onPoker, onBack }) {
           <Text style={styles.cardRule2}>Raise, Call, Fold</Text>
         </Pressable>
 
-      </View>
+      </FadeInView>
 
       {/* ── Back ── */}
-      <Pressable
-        style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}
-        onPress={onBack}
-      >
-        <Text style={styles.backText}>← Back to Menu</Text>
-      </Pressable>
+      <FadeInView delay={140}>
+        <Pressable
+          style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}
+          onPress={onBack}
+        >
+          <Text style={styles.backText}>← Back to Menu</Text>
+        </Pressable>
+      </FadeInView>
 
     </View>
   );
@@ -61,6 +66,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,
+    position: 'relative',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,

@@ -16,6 +16,8 @@ import { evaluateHand, compareHands } from '../components/pokerHandEvaluator';
 import { getPokerAiDecision } from '../components/pokerAI';
 import { auth, db } from '../firebaseConfig';
 import { Colors } from '../styles/theme';
+import BackgroundLayers from '../components/BackgroundLayers';
+import FadeInView from '../components/FadeInView';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -239,7 +241,7 @@ const sl = StyleSheet.create({
 
 // ── AiSeat ─────────────────────────────────────────────────────────────────────
 
-function AiSeat({ player, isActive, lastAction, compact }) {
+const AiSeat = React.memo(function AiSeat({ player, isActive, lastAction, compact }) {
   const { name, stack, streetBet, folded, revealed, hand, handName } = player;
   const cardSize = compact ? { width: 22, height: 32 } : { width: 28, height: 42 };
   const cardInner = compact ? { width: 16, height: 26 } : { width: 20, height: 34 };
@@ -294,7 +296,7 @@ function AiSeat({ player, isActive, lastAction, compact }) {
           : null}
     </View>
   );
-}
+});
 
 const as = StyleSheet.create({
   box: {
@@ -773,15 +775,16 @@ export default function PokerScreen({ onExitToWelcome }) {
   if (Platform.OS === 'web') {
     return (
       <View style={w.root}>
+        <BackgroundLayers />
 
         {/* Header */}
-        <View style={w.header}>
+        <FadeInView style={w.header} delay={0}>
           <Text style={w.title}>♣ Texas Hold'em ♠</Text>
           <View style={w.streetPill}>
             <Text style={w.streetText}>{STREET_LABEL[phase] ?? phase}</Text>
           </View>
           <Text style={w.pot}>Pot: {pot}</Text>
-        </View>
+        </FadeInView>
 
         {/* AI grid */}
         <View style={w.aiSection}>
@@ -885,11 +888,12 @@ export default function PokerScreen({ onExitToWelcome }) {
   // ── Mobile layout ─────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={gameStyles.container}>
+    <SafeAreaView style={[gameStyles.container, { position: 'relative' }]}>
+      <BackgroundLayers />
       <ScrollView contentContainerStyle={m.scroll} showsVerticalScrollIndicator={false}>
 
         {/* Header */}
-        <View style={m.header}>
+        <FadeInView style={m.header} delay={0}>
           <Text style={m.title}>Texas Hold'em</Text>
           <View style={m.headerRight}>
             <View style={m.streetPill}>
@@ -897,7 +901,7 @@ export default function PokerScreen({ onExitToWelcome }) {
             </View>
             <Text style={m.pot}>Pot: {pot}</Text>
           </View>
-        </View>
+        </FadeInView>
 
         {/* AI grid */}
         <View style={m.aiGrid}>
@@ -1004,7 +1008,7 @@ export default function PokerScreen({ onExitToWelcome }) {
 
 const w = StyleSheet.create({
   root: {
-    flex: 1, backgroundColor: Colors.bg,
+    flex: 1, backgroundColor: Colors.bg, position: 'relative',
     paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8,
   },
   header: {

@@ -7,6 +7,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
 import { auth, db } from "../firebaseConfig";
 import { Colors } from "../styles/theme";
+import BackgroundLayers from "../components/BackgroundLayers";
+import FadeInView from "../components/FadeInView";
 
 async function fetchHistory() {
   const user = auth.currentUser;
@@ -121,10 +123,13 @@ export default function HistoryScreen({ onBack }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { position: "relative" }]}>
+      <BackgroundLayers />
 
-      <Text style={styles.title}>History</Text>
-      <Text style={styles.subtitle}>Last 100 games • Blackjack & Poker</Text>
+      <FadeInView delay={0}>
+        <Text style={styles.title}>History</Text>
+        <Text style={styles.subtitle}>Last 100 games • Blackjack & Poker</Text>
+      </FadeInView>
       <View style={styles.divider} />
 
       {loading ? (
