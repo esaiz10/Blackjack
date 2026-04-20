@@ -1,0 +1,316 @@
+CAPSTONE PROJECT DOCUMENTATION
+Poker App (Texas Hold'em) in BlackjackCapStone
+
+Author: Saiz
+Project Path: /Users/saiz/Documents/BSSE/BlackjackCapStone
+Last Updated: April 13, 2026
+
+============================================================
+1. Executive Summary
+============================================================
+
+This capstone project is a cross-platform casino app built with Expo and React Native.
+The poker portion implements a playable Texas Hold'em experience with one human player
+against four AI players, plus persistent data tracking through Firebase.
+
+The poker module includes:
+- Full hand lifecycle: preflop, flop, turn, river, showdown
+- Betting actions: check, call, raise, fold
+- Blind posting and turn-order logic
+- AI decision-making based on hand strength and pot odds
+- Hand evaluation and deterministic tie-breaking
+- Firestore persistence for outcomes, sessions, and per-hand records
+
+The app runs on web, iOS, and Android from a single codebase.
+
+============================================================
+2. Project Scope and Objectives
+============================================================
+
+Primary objectives:
+- Build a functional Texas Hold'em game loop with realistic street progression
+- Implement AI opponents that make non-random strategic decisions
+- Persist user stats and hand/session history in cloud storage
+- Integrate poker into a broader authenticated gaming app
+- Support deployment to both web and mobile platforms
+
+Success criteria achieved:
+- Poker gameplay is implemented in production screen flow
+- AI engine is integrated and tunable
+- Firestore writes are wired for stats, games, sessions, and hand logs
+- User authentication and persistence are in place
+- The app is buildable and testable through npm scripts
+
+============================================================
+3. Technology Stack
+============================================================
+
+Frontend and Runtime:
+- React 19.1.0
+- React Native 0.81.5
+- Expo ~54.0.31
+- react-native-web ^0.21.0
+
+Backend and Data:
+- Firebase JS SDK ^12.8.0
+- Firebase Authentication
+- Cloud Firestore
+
+Testing and Tooling:
+- Jest ~29.7.0
+- jest-expo ~54.0.17
+- @testing-library/react-native ^13.3.3
+- @testing-library/jest-native ^5.4.3
+
+============================================================
+4. High-Level Architecture
+============================================================
+
+Core routing model:
+- App.js uses state-based screen routing (no React Navigation)
+- Poker is entered through GameSelectScreen and rendered by screens/PokerScreen.js
+
+Poker architecture layers:
+1) UI Layer
+   - screens/PokerScreen.js
+   - components/BackgroundLayers.js
+   - components/FadeInView.js
+
+2) Game Engine Layer
+   - Poker street state machine and betting flow in PokerScreen.js
+   - Card/deck utilities in components/deck.js
+
+3) Decision Engine Layer
+   - AI action selection in components/pokerAI.js
+   - Hand evaluator and comparison in components/pokerHandEvaluator.js
+
+4) Persistence Layer
+   - Firebase config in firebaseConfig.js
+   - Firestore reads/writes in PokerScreen.js and stats/history screens
+
+============================================================
+5. Poker Module Functional Documentation
+============================================================
+
+5.1 Table Configuration
+- Players: 5 seats total (1 human + 4 AI)
+- Starting stack: 1000 chips per seat
+- Blinds: Small Blind 10, Big Blind 20
+- Streets: preflop -> flop -> turn -> river -> showdown
+
+5.2 Gameplay Features
+- User actions: check, call, raise, fold
+- Human raise sizing via draggable slider (5-chip increments)
+- AI auto-actions during its turn
+- Pot and street bet tracking
+- Hand conclusion by fold-out or showdown
+- Hand result and bankroll impact persisted to Firestore
+
+5.3 Turn Order and Betting Flow
+- Preflop order starts from UTG and proceeds through blind seats
+- Postflop order starts from first active seat
+- On raise, action re-opens to remaining active players
+- Betting rounds close when all active players are matched/checking or folded
+
+5.4 Hand Evaluation and Winner Selection
+- Best 5-card hand is selected from 5-7 cards
+- Ranking supported from High Card to Royal Flush
+- Ties resolved by deterministic tiebreaker arrays
+- Winner or tie result drives payout and persistence events
+
+============================================================
+6. Poker AI Design
+============================================================
+
+File: components/pokerAI.js
+
+AI strengths:
+- Uses explicit strength tiers:
+  weak, weak_medium, medium, medium_strong, strong, very_strong
+- Applies different logic preflop vs postflop
+- Uses pot odds (call ratio) to gate calls and folds
+- Uses positional looseness in late position preflop
+- Includes controlled bluff and trap behavior
+
+Decision outputs:
+- fold, check, call, raise
+
+Training/tuning:
+- scripts/pokerSim.js performs self-play parameter sweeps
+- Tuned parameters are written back into pokerAI.js
+- The checked-in file indicates tuned values stamped on 2026-03-04
+
+============================================================
+7. Data Model and Persistence
+============================================================
+
+7.1 Authentication
+- Firebase Auth with email/password
+- User session persistence:
+  - Web: browserLocalPersistence
+  - Native: AsyncStorage-backed persistence
+
+7.2 Firestore Collections Used by Poker
+
+A) stats/{userId}
+Aggregated counters, including poker:
+- poker.wins
+- poker.losses
+- poker.ties
+
+B) games
+One summary row per completed poker hand result:
+- userId
+- gameType = "poker"
+- result = win/loss/tie
+- playerScore (used as stack snapshot)
+- playedAt
+
+C) pokerGames
+One document per poker session:
+- userId
+- startedAt
+- endedAt
+- handsPlayed
+- wins, losses, ties
+- startStack
+- finalStack
+- netChips
+
+D) pokerGames/{gameId}/hands
+One document per hand in a poker session:
+- hand metadata (number/time)
+- result
+- pot and stack values
+- cards and board state
+- street action context
+- end reason (showdown/fold)
+
+============================================================
+8. UI/UX Documentation (Poker)
+============================================================
+
+- Poker table screen uses custom themed visual layers for casino look-and-feel
+- Seat layout differentiates human and AI players
+- Community cards and street label are visible and updated live
+- Betting controls are context aware (enabled only when valid)
+- Raise slider provides smooth chip sizing interaction
+- Animations improve readability of turn transitions and screen entry
+
+============================================================
+9. Security and Configuration
+============================================================
+
+Environment variables:
+- EXPO_PUBLIC_FIREBASE_API_KEY
+- EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN
+- EXPO_PUBLIC_FIREBASE_PROJECT_ID
+- EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET
+- EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+- EXPO_PUBLIC_FIREBASE_APP_ID
+- EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID
+
+Recommended Firestore rules:
+- Allow reads/writes only for authenticated users
+- Restrict each user's stats/sessions to matching auth UID
+- Validate expected field schema and data types
+
+Known security limitation:
+- Results are currently client-authored and written directly from app code
+- A server-authoritative validation layer is not implemented yet
+
+============================================================
+10. Setup, Build, and Run
+============================================================
+
+From project root:
+
+1) Install dependencies
+npm install
+
+2) Configure environment
+cp .env.example .env
+# Fill all EXPO_PUBLIC_FIREBASE_* values
+
+3) Run app
+npm run web
+npm run ios
+npm run android
+
+4) Run tests
+npm test
+
+5) Build web export
+npm run build
+
+============================================================
+11. Testing and Quality
+============================================================
+
+Current automated coverage:
+- Baseline render test exists for Blackjack UI
+
+Poker-specific testing status:
+- Poker gameplay is implemented but lacks broad automated unit/integration tests
+
+Recommended test additions:
+- Hand evaluator edge cases (wheel straight, split pots, kicker ties)
+- Betting round state transitions
+- AI decision branch coverage
+- Firestore write contract tests with mocks
+- End-to-end smoke flow for one full poker hand
+
+============================================================
+12. Deployment Notes
+============================================================
+
+- Web deployment target uses static export via Expo
+- vercel.json points build output to dist/
+- Mobile deployment follows Expo-native workflow
+
+============================================================
+13. Current Limitations
+============================================================
+
+- Navigation is state-driven in App.js instead of a dedicated navigation framework
+- Firestore schema is enforced mostly by app logic (not strict typed contracts)
+- Test coverage is light for advanced poker edge cases
+- No anti-cheat or authoritative server adjudication layer
+- No dedicated analytics service beyond Firestore records
+
+============================================================
+14. Future Enhancements
+============================================================
+
+- Add side-pot support for all-in scenarios
+- Add configurable blind levels and tournament mode
+- Add richer AI personas and strategy profiles
+- Add real-time multiplayer mode with host authority
+- Add backend validation API for trusted game result writes
+- Expand dashboards for long-term performance analytics
+
+============================================================
+15. File References (Key Poker Components)
+============================================================
+
+- App entry and routing:
+  /Users/saiz/Documents/BSSE/BlackjackCapStone/App.js
+
+- Poker gameplay screen:
+  /Users/saiz/Documents/BSSE/BlackjackCapStone/screens/PokerScreen.js
+
+- Poker AI logic:
+  /Users/saiz/Documents/BSSE/BlackjackCapStone/components/pokerAI.js
+
+- Poker hand evaluation:
+  /Users/saiz/Documents/BSSE/BlackjackCapStone/components/pokerHandEvaluator.js
+
+- Simulation and AI tuning:
+  /Users/saiz/Documents/BSSE/BlackjackCapStone/scripts/pokerSim.js
+
+- Firebase configuration:
+  /Users/saiz/Documents/BSSE/BlackjackCapStone/firebaseConfig.js
+
+- Existing internal project docs:
+  /Users/saiz/Documents/BSSE/BlackjackCapStone/DOCUMENTATION.md
+

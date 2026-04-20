@@ -1,0 +1,73 @@
+BlackjackCapStone - Frameworks Documentation
+
+Project: BlackjackCapStone
+Last Updated: March 8, 2026
+
+1. Frontend Frameworks
+
+- React (19.1.0)
+  Purpose: Component model and UI rendering logic.
+
+- React Native (0.81.5)
+  Purpose: Cross-platform native UI layer for iOS and Android.
+
+- Expo SDK (~54.0.31)
+  Purpose: Build/runtime platform, dev tooling, bundling, asset management, and platform abstraction.
+
+- react-native-web (^0.21.0)
+  Purpose: Renders React Native components in the browser for web support.
+
+- react-native-safe-area-context (~5.6.0)
+  Purpose: Handles device safe areas (notches/status bars) consistently.
+
+- expo-status-bar (~3.0.9)
+  Purpose: Status bar control in Expo/React Native environments.
+
+- @expo/metro-runtime (~6.1.2)
+  Purpose: Metro runtime support for Expo app execution.
+
+2. Backend and Data Frameworks
+
+- Firebase JS SDK (^12.8.0)
+  Purpose: Cloud-backed authentication and data services.
+
+  - Firebase Authentication
+    Usage in project: Email/password sign up, sign in, session handling.
+
+  - Cloud Firestore
+    Usage in project: Stores user stats, game history, poker sessions, and per-hand poker records.
+
+- @react-native-async-storage/async-storage (2.2.0)
+  Purpose: Persistence adapter used by Firebase Auth for native session persistence.
+
+3. Testing Frameworks
+
+- Jest (~29.7.0)
+  Purpose: Unit/component test runner.
+
+- jest-expo (~54.0.17)
+  Purpose: Expo-specific Jest preset and runtime compatibility.
+
+- @testing-library/react-native (^13.3.3)
+  Purpose: React Native component testing utilities.
+
+- @testing-library/jest-native (^5.4.3)
+  Purpose: Additional native-focused assertions for Jest.
+
+4. Language and Type Tooling
+
+- TypeScript (~5.9.2)
+  Purpose: Type support and static analysis configuration.
+  Note: The project is primarily JavaScript but has TypeScript tooling configured.
+
+5. Deployment Tooling
+
+- Vercel (configured via vercel.json)
+  Purpose: Hosts exported web build output.
+
+- Expo Web Export (expo export --platform web)
+  Purpose: Builds static web assets to dist/ for deployment.
+
+Summary
+
+BlackjackCapStone is built on an Expo + React Native frontend stack, with Firebase as the backend service layer and Jest-based testing infrastructure. The same codebase is used across mobile and web, with Firestore as the main persistence layer for gameplay analytics and history.
